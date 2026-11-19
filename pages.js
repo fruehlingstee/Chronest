@@ -124,8 +124,13 @@
     form.onsubmit = event => {
       event.preventDefault();
       quickText = input.value;
-      if (addFromQuickText(quickText)) quickText = '';
+      const snapshot = snapshotData();
+      const added = addFromQuickText(quickText);
+      // 追加できたときは、完了の知らせを「元に戻す」と一緒に下のお知らせで出す（解析が意図と違えばすぐ取り消せる）。
+      const message = quickNotice;
+      if (added) { quickText = ''; quickNotice = ''; }
       render();
+      if (added) offerUndo(message, snapshot);
       document.querySelector('#quickAddInput')?.focus();
     };
     const search = document.querySelector('#globalSearch');
@@ -134,9 +139,11 @@
     document.querySelectorAll('[data-dash-toggle]').forEach(box => box.onchange = () => {
       const task = data.tasks.find(item => String(item.id) === box.dataset.dashToggle);
       if (!task) return;
+      const snapshot = snapshotData();
       if (globalThis.dayflowTasks) globalThis.dayflowTasks.setCompleted(task, box.checked); else task.done = box.checked;
-      quickNotice = `「${task.title}」を完了にしました。`;
+      quickNotice = '';
       save(); render();
+      offerUndo(`「${task.title}」を完了にしました。`, snapshot);
     });
     document.querySelectorAll('[data-focus-task]').forEach(button => button.onclick = () => startFocusTask(button.dataset.focusTask));
     document.querySelectorAll('[data-dash-event]').forEach(button => button.onclick = () => openCalendarDay(button.dataset.dashEvent));

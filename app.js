@@ -113,7 +113,7 @@ function normalizeData(input, options = {}) {
         color: eventColorChoice(item.color)
       };
     }),
-    notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created) })),
+    notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created), ...(typeof item.updated === 'string' && Number.isFinite(Date.parse(item.updated)) ? { updated: item.updated } : {}) })),
     sessions: collection('sessions', false, item => isDateKey(item.date) && typeof item.minutes === 'number' && Number.isFinite(item.minutes) && item.minutes > 0 && (!strict || optionalString(item, 'task')), item => ({ date: item.date, minutes: item.minutes, task: text(item.task), taskId: (typeof item.taskId === 'number' && Number.isFinite(item.taskId)) || (typeof item.taskId === 'string' && /^[\w.-]+$/.test(item.taskId)) ? item.taskId : '' })),
     bookmarks: collection('bookmarks', false, item => typeof item.url === 'string' && Boolean(bookmarkUrl(item.url)) && (!strict || (optionalString(item, 'title') && (item.tags === undefined || (Array.isArray(item.tags) && item.tags.every(tag => typeof tag === 'string'))))), item => ({ id: id(item.id), title: text(item.title), url: bookmarkUrl(item.url), tags: (Array.isArray(item.tags) ? item.tags : []).filter(tag => typeof tag === 'string'), created: created(item.created) })),
     calculatorHistory: collection('calculatorHistory', false, item => typeof item.expression === 'string' && typeof item.result === 'string', item => ({ expression: item.expression, result: item.result })).slice(0, 10)
@@ -144,6 +144,7 @@ function save() {
       recoveryRecord = null;
     }
     localStorage.setItem(store, JSON.stringify(data));
+    saveCount++;
     return true;
   } catch (_) {
     storageWarning = 'データを端末に保存できません。空き容量やブラウザの設定を確認し、バックアップを保存してください。';
@@ -177,7 +178,102 @@ function tasks(){const total=data.tasks.length,done=data.tasks.filter(t=>t.done)
 function getTasks(){let a=data.tasks.filter(t=>(filter==='all'||filter==='open'&&!t.done||filter==='done'&&t.done||filter==='overdue'&&!t.done&&t.due&&t.due<dayKey(new Date()))&&((t.title+t.note).toLowerCase().includes(query.toLowerCase())));let s=$('#sort')?.value||'created', rank={high:0,medium:1,low:2};return a.sort((a,b)=>s==='name'?a.title.localeCompare(b.title,'ja'):s==='priority'?rank[a.priority]-rank[b.priority]:s==='due'?(a.due||'9999').localeCompare(b.due||'9999'):new Date(b.created)-new Date(a.created))}
 function drawTasks(){let a=getTasks();$('#taskList').innerHTML=a.length?a.map(t=>`<article class="task ${t.done?'done':''}"><input class="check" type="checkbox" data-toggle="${t.id}" ${t.done?'checked':''} aria-label="完了"><div><div class="task-title">${esc(t.title)}</div><div class="meta"><span class="tag">● ${t.priority==='high'?'高':t.priority==='medium'?'中':'低'}</span>${t.due?`<span>${t.due}${!t.done&&t.due<dayKey(new Date())?' · 期限超過':''}</span>`:''}${t.note?`<span>▹ メモあり</span>`:''}</div></div><div class="task-actions"><button data-edit="${t.id}">編集</button></div></article>`).join(''):'<div class="empty">条件に一致するタスクはありません</div>';document.querySelectorAll('[data-toggle]').forEach(x=>x.onchange=()=>{let t=data.tasks.find(t=>t.id==x.dataset.toggle);t.done=x.checked;save();render()});document.querySelectorAll('[data-edit]').forEach(x=>x.onclick=()=>editTask(x.dataset.edit))}
 function calendar(){let y=month.getFullYear(),m=month.getMonth(),first=new Date(y,m,1),start=first.getDay(),max=new Date(y,m+1,0).getDate(),cells=['日','月','火','水','木','金','土'].map(d=>`<div class="dayname">${d}</div>`);for(let i=0;i<start;i++)cells.push('<div class="day"></div>');for(let d=1;d<=max;d++){let k=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;cells.push(`<div class="day ${k===dayKey(new Date())?'today':''}"><b>${d}</b>${data.events.filter(e=>eventOccursOn(e,k)).map(e=>`<div class="event" title="${esc(e.title)}">${esc(eventTimeLabel(e,k))} ${esc(e.title)}</div>`).join('')}</div>`)}return `<main class="page"><div class="page-head"><div><p class="kicker">02 / CALENDAR</p><h1 class="title">${y}年 ${m+1}月</h1></div><div><button class="ghost" data-prev>← 前月</button><button class="ghost" data-next>次月 →</button></div></div><form class="toolbar" id="addEvent"><input class="select" id="eventDate" type="date" value="${dayKey(new Date())}" required><input class="select" id="eventTime" type="time"><input class="input" id="eventTitle" required placeholder="予定のタイトル"><button class="button">予定を追加</button></form><section class="panel" style="padding:0;overflow:auto"><div class="calendar">${cells.join('')}</div></section><section class="panel" style="margin-top:14px"><h3>予定を管理</h3>${data.events.sort((a,b)=>a.date.localeCompare(b.date)).map(e=>`<div class="quick">${e.date} ${e.time||'終日'} · ${esc(e.title)} <button class="ghost" data-event-delete="${e.id}">削除</button></div>`).join('')||'<div class="empty">予定はまだありません</div>'}</section></main>`}
-function notes(){let pins=data.notes.filter(n=>n.pinned), others=data.notes.filter(n=>!n.pinned);return `<main class="page"><div class="page-head"><div><p class="kicker">03 / QUICK NOTES</p><h1 class="title">メモ</h1></div></div><section class="panel"><textarea id="noteBody" rows="5" placeholder="いま考えていること…"></textarea><div class="toolbar" style="margin-bottom:0"><button class="button" id="saveNote">メモを保存</button><span class="subtitle">ピン留めしたメモは先頭に表示されます。</span></div></section><section class="notes" style="margin-top:14px">${[...pins,...others].map(n=>`<article class="note ${n.pinned?'pinned':''}">${esc(n.body)}<small>${n.pinned?'★ PINNED · ':''}${new Date(n.created).toLocaleDateString('ja-JP')} <button class="ghost" data-pin="${n.id}">${n.pinned?'ピン解除':'ピン留め'}</button> <button class="ghost" data-note-delete="${n.id}">削除</button></small></article>`).join('')||'<div class="empty">メモはまだありません</div>'}</section></main>`}
+// ---- 元に戻す ----
+// 完了・削除などの直前にデータの写しを取り、操作後に「元に戻す」を数秒間表示する。
+// 写しを取った後に別の変更が保存されていたら（集中の記録など）、その変更を消さないよう戻さない。
+let saveCount = 0, undoState = null, undoTimer = null;
+const UNDO_SECONDS = 8;
+function snapshotData() { return JSON.stringify(data); }
+function offerUndo(message, snapshot) {
+  undoState = { message, snapshot, saveCount };
+  showUndoToast();
+}
+function showUndoToast() {
+  const root = $('#toastRoot');
+  if (!root) return;
+  if (typeof clearTimeout === 'function') clearTimeout(undoTimer);
+  if (!undoState) { root.innerHTML = ''; return; }
+  root.innerHTML = `<div class="toast" role="status"><span>${esc(undoState.message)}</span><button class="button dim" id="undoButton" type="button">元に戻す</button></div>`;
+  const button = $('#undoButton');
+  if (button) button.onclick = undoLastAction;
+  if (typeof setTimeout === 'function') undoTimer = setTimeout(() => { undoState = null; showUndoToast(); }, UNDO_SECONDS * 1000);
+}
+function undoLastAction() {
+  const state = undoState;
+  undoState = null;
+  if (state && state.saveCount === saveCount) {
+    data = normalizeData(JSON.parse(state.snapshot));
+    save();
+    render();
+  }
+  showUndoToast();
+}
+
+// ---- メモ ----
+let noteFilter = '';
+function notesListMarkup() {
+  const words = noteFilter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = [...data.notes.filter(note => note.pinned), ...data.notes.filter(note => !note.pinned)]
+    .filter(note => words.every(word => note.body.toLowerCase().includes(word)));
+  if (!list.length) return `<div class="empty">${data.notes.length ? '一致するメモはありません' : 'メモはまだありません'}</div>`;
+  return list.map(note => `<article class="note ${note.pinned ? 'pinned' : ''}">${esc(note.body)}<small>${note.pinned ? '★ PINNED · ' : ''}${new Date(note.created).toLocaleDateString('ja-JP')}${note.updated ? ' · 編集済み' : ''} <button class="ghost" data-note-edit="${esc(note.id)}">編集</button> <button class="ghost" data-pin="${esc(note.id)}">${note.pinned ? 'ピン解除' : 'ピン留め'}</button> <button class="ghost" data-note-delete="${esc(note.id)}">削除</button></small></article>`).join('');
+}
+function notes() {
+  return `<main class="page"><div class="page-head"><div><p class="kicker">03 / QUICK NOTES</p><h1 class="title">メモ</h1></div></div>
+    <section class="panel"><textarea id="noteBody" rows="5" aria-label="新しいメモ" placeholder="いま考えていること…"></textarea><div class="toolbar" style="margin-bottom:0"><button class="button" id="saveNote">メモを保存</button><span class="subtitle">ピン留めしたメモは先頭に表示されます。</span></div></section>
+    <div class="toolbar notes-filter"><input class="input" id="noteFilter" type="search" autocomplete="off" aria-label="メモを絞り込む" placeholder="⌕ メモを絞り込む" value="${esc(noteFilter)}"></div>
+    <section class="notes" id="notesList">${notesListMarkup()}</section></main>`;
+}
+const findNote = id => data.notes.find(note => String(note.id) === String(id));
+function editNote(id) {
+  const note = findNote(id);
+  if (!note) return;
+  modal(`<h2>メモを編集</h2><form id="noteEditForm"><label for="editNoteBody">内容</label><textarea id="editNoteBody" rows="8">${esc(note.body)}</textarea>
+    <div class="modal-actions"><button class="button dim" type="button" id="cancelNoteEdit">キャンセル</button><button class="button" type="submit">保存</button></div></form>`);
+  const body = $('#editNoteBody');
+  $('#cancelNoteEdit').onclick = closeModal;
+  body.oninput = () => body.setCustomValidity && body.setCustomValidity('');
+  $('#noteEditForm').onsubmit = event => {
+    event.preventDefault();
+    const value = body.value.trim();
+    if (!value) {
+      if (body.setCustomValidity) { body.setCustomValidity('メモの内容を入力してください。'); body.reportValidity(); }
+      return;
+    }
+    if (value !== note.body) { note.body = value; note.updated = new Date().toISOString(); save(); }
+    closeModal(); render();
+  };
+}
+function bindNoteList() {
+  document.querySelectorAll('[data-note-edit]').forEach(button => button.onclick = () => editNote(button.dataset.noteEdit));
+  document.querySelectorAll('[data-pin]').forEach(button => button.onclick = () => {
+    const note = findNote(button.dataset.pin);
+    if (!note) return;
+    note.pinned = !note.pinned; save(); render();
+  });
+  // 「元に戻す」で取り消せるので、メモの削除は確認画面を挟まずにすぐ行う。
+  document.querySelectorAll('[data-note-delete]').forEach(button => button.onclick = () => {
+    const snapshot = snapshotData();
+    data.notes = data.notes.filter(note => String(note.id) !== button.dataset.noteDelete);
+    save(); render();
+    offerUndo('メモを削除しました。', snapshot);
+  });
+}
+function bindNotes() {
+  $('#saveNote').onclick = () => {
+    const body = $('#noteBody').value.trim();
+    if (!body) return;
+    data.notes.unshift({ id: globalThis.crypto?.randomUUID?.() || `note-${Date.now()}`, body, pinned: false, created: new Date().toISOString() });
+    save(); render();
+  };
+  const filterInput = $('#noteFilter');
+  if (filterInput) filterInput.oninput = () => {
+    noteFilter = filterInput.value;
+    const list = $('#notesList');
+    if (list) { list.innerHTML = notesListMarkup(); bindNoteList(); }
+  };
+  bindNoteList();
+}
 let focusDuration=1500, focusTaskName='', focusEndAt=0, focusTaskId='', focusFinishedTaskId='';
 const focusTask=id=>id===''?null:data.tasks.find(task=>String(task.id)===String(id))||null;
 // タスク一覧やダッシュボードの「集中」ボタンから、そのタスクを選んだ状態で集中画面を開く。
@@ -229,9 +325,13 @@ function bindFocus() {
   if (completeButton) completeButton.onclick=()=>{
     const task=focusTask(focusFinishedTaskId);
     if (task) {
+      const snapshot=snapshotData();
       // 繰り返しタスクの次回予約などはタスク画面と同じ処理に任せる。
       if (globalThis.dayflowTasks) globalThis.dayflowTasks.setCompleted(task,true); else { task.done=true; }
       save();
+      focusFinishedTaskId=''; render();
+      offerUndo(`「${task.title}」を完了にしました。`, snapshot);
+      return;
     }
     focusFinishedTaskId=''; render();
   };
@@ -279,5 +379,5 @@ function closeModal() {
 }
 function editTask(id){let t=data.tasks.find(x=>x.id==id);modal(`<h2>タスクを編集</h2><label>タスク名</label><input class="input" id="editTitle" value="${esc(t.title)}"><label>優先度</label><select class="select" id="editPriority"><option value="high" ${t.priority==='high'?'selected':''}>高</option><option value="medium" ${t.priority==='medium'?'selected':''}>中</option><option value="low" ${t.priority==='low'?'selected':''}>低</option></select><label>期限日</label><input class="input" id="editDue" type="date" value="${t.due}"><label>メモ</label><textarea id="editNote" rows="4">${esc(t.note)}</textarea><div class="modal-actions"><button class="button dim" id="cancel">キャンセル</button><button class="button" id="saveEdit">保存</button></div><div class="danger-zone"><p>削除は確認画面へ進みます。ワンタップでは消えません。</p><button class="button danger" id="askDelete">このタスクを削除…</button></div>`);$('#cancel').onclick=closeModal;$('#saveEdit').onclick=()=>{t.title=$('#editTitle').value.trim()||t.title;t.priority=$('#editPriority').value;t.due=$('#editDue').value;t.note=$('#editNote').value;save();closeModal();render()};$('#askDelete').onclick=()=>confirmDelete('タスクを完全に削除しますか？',()=>{data.tasks=data.tasks.filter(x=>x.id!=id);save();closeModal();render()})}
 function confirmDelete(msg,yes){modal(`<h2>削除の確認</h2><p class="subtitle">${msg}</p><div class="modal-actions"><button class="button dim" id="no">キャンセル</button><button class="button danger" id="yes">削除する</button></div>`);$('#no').onclick=closeModal;$('#yes').onclick=yes}
-function bind(){if(page==='tasks'){$('#addTask').onsubmit=e=>{e.preventDefault();let title=$('#taskName').value.trim();if(!title)return;data.tasks.unshift({id:Date.now(),title,priority:$('#taskPriority').value,due:$('#taskDue').value,note:'',done:false,created:new Date().toISOString()});save();render()};$('#search').oninput=e=>{query=e.target.value;drawTasks()};$('#sort').onchange=drawTasks;document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;render()});drawTasks()}if(page==='calendar'){document.querySelector('[data-prev]').onclick=()=>{month.setMonth(month.getMonth()-1);render()};document.querySelector('[data-next]').onclick=()=>{month.setMonth(month.getMonth()+1);render()};$('#addEvent').onsubmit=e=>{e.preventDefault();data.events.push({id:Date.now(),date:$('#eventDate').value,time:$('#eventTime').value,title:$('#eventTitle').value});save();render()};document.querySelectorAll('[data-event-delete]').forEach(b=>b.onclick=()=>confirmDelete('この予定を削除しますか？',()=>{data.events=data.events.filter(e=>e.id!=b.dataset.eventDelete);save();closeModal();render()}))}if(page==='notes'){$('#saveNote').onclick=()=>{let body=$('#noteBody').value.trim();if(body){data.notes.unshift({id:Date.now(),body,pinned:false,created:new Date().toISOString()});save();render()}};document.querySelectorAll('[data-pin]').forEach(b=>b.onclick=()=>{let n=data.notes.find(n=>n.id==b.dataset.pin);n.pinned=!n.pinned;save();render()});document.querySelectorAll('[data-note-delete]').forEach(b=>b.onclick=()=>confirmDelete('このメモを削除しますか？',()=>{data.notes=data.notes.filter(n=>n.id!=b.dataset.noteDelete);save();closeModal();render()}))}if(page==='focus')bindFocus();}
+function bind(){if(page==='tasks'){$('#addTask').onsubmit=e=>{e.preventDefault();let title=$('#taskName').value.trim();if(!title)return;data.tasks.unshift({id:Date.now(),title,priority:$('#taskPriority').value,due:$('#taskDue').value,note:'',done:false,created:new Date().toISOString()});save();render()};$('#search').oninput=e=>{query=e.target.value;drawTasks()};$('#sort').onchange=drawTasks;document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;render()});drawTasks()}if(page==='calendar'){document.querySelector('[data-prev]').onclick=()=>{month.setMonth(month.getMonth()-1);render()};document.querySelector('[data-next]').onclick=()=>{month.setMonth(month.getMonth()+1);render()};$('#addEvent').onsubmit=e=>{e.preventDefault();data.events.push({id:Date.now(),date:$('#eventDate').value,time:$('#eventTime').value,title:$('#eventTitle').value});save();render()};document.querySelectorAll('[data-event-delete]').forEach(b=>b.onclick=()=>confirmDelete('この予定を削除しますか？',()=>{data.events=data.events.filter(e=>e.id!=b.dataset.eventDelete);save();closeModal();render()}))}if(page==='notes')bindNotes();if(page==='focus')bindFocus();}
 render();

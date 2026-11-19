@@ -9,6 +9,15 @@ function createPages({ now = '2026-11-19T12:00:00', stored } = {}) {
   const storage = new Map(stored ? [['dayflow-v2', JSON.stringify({ notes: [], sessions: [], bookmarks: [], ...stored })]] : []);
   const nodes = new Map();
   const timers = new Map();
+  // 編集画面（modal）の中身も、入力欄を取り出せるよう同じ方法で読み取る（画面本体の入力欄は消さない）。
+  const installModal = markup => {
+    for (const [, attributes] of markup.matchAll(/<[a-z]+\b([^>]*)>/gi)) {
+      const id = attributes.match(/\bid="([^"]*)"/);
+      if (id) nodes.set('#' + id[1], element());
+    }
+    const textarea = markup.match(/<textarea id="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/);
+    if (textarea) nodes.get('#' + textarea[1]).value = textarea[2].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  };
   let clock = new Date(now).getTime(), timerId = 0, uuid = 0;
   const element = () => ({ value: '', textContent: '', hidden: false, dataset: {}, focus() {}, setAttribute() {} });
   const root = element();
@@ -45,6 +54,9 @@ function createPages({ now = '2026-11-19T12:00:00', stored } = {}) {
   });
   context.window = context;
   for (const file of ['schedule.js', 'app.js', 'insights.js', 'pages.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context, { filename: file });
+  // 実際の modal はブラウザのDOM操作を使うため、テストでは中身の読み取りだけを行う代わりに差し替える。
+  context.installModal = installModal;
+  vm.runInContext('modal = html => installModal(html); closeModal = () => {};', context);
   return {
     run: code => vm.runInContext(code, context),
     node: selector => nodes.get(selector),
@@ -93,7 +105,7 @@ test('クイック追加は文章を解析して予定・タスクを登録し�
   submit(app.node('#quickAddForm'));
   assert.equal(app.run('data.events.length'), 1);
   assert.equal(app.run('JSON.stringify([data.events[0].title, data.events[0].date, data.events[0].time, data.events[0].repeat])'), '["会議","2026-11-20","15:00","none"]');
-  assert.match(app.html(), /予定「会議」を11\/20に追加しました/);
+  assert.equal(app.run('undoState.message'), '予定「会議」を11/20に追加しました。', '追加の知らせは「元に戻す」と一緒に出す');
   assert.equal(app.node('#quickAddInput').value, '', '登録後は入力欄を空にする');
   assert.ok(JSON.parse(app.storage.get('dayflow-v2')).events.length === 1, '端末に保存する');
 
@@ -167,4 +179,56 @@ test('集中する作業名を書き換えるとタスクとの連携を外し�
   input.value = '作文の下書き';
   input.oninput({ target: input });
   assert.equal(app.run('focusTaskId'), '');
+});
+
+test('メモは編集でき、絞り込み欄で本文から探せる', () => {
+  const app = createPages({ stored: { tasks: [], events: [], notes: [
+    { id: 'shop', body: '牛乳とパンを買う', pinned: false, created: '2026-11-18T09:00:00.000Z' },
+    { id: 'idea', body: 'アプリの改善案', pinned: true, created: '2026-11-17T09:00:00.000Z' }
+  ] } });
+  app.run("page='notes'; render()");
+  assert.match(app.html(), /data-note-edit="shop"/);
+  app.run("editNote('shop')");
+  assert.equal(app.node('#editNoteBody').value, '牛乳とパンを買う');
+  app.node('#editNoteBody').value = '牛乳とパンと卵を買う';
+  app.node('#noteEditForm').onsubmit({ preventDefault() {} });
+  assert.equal(app.run("findNote('shop').body"), '牛乳とパンと卵を買う');
+  assert.ok(app.run("findNote('shop').updated"), '編集日時を残す');
+  assert.match(app.html(), /編集済み/);
+  app.run("editNote('shop')");
+  app.node('#editNoteBody').value = '   ';
+  app.node('#noteEditForm').onsubmit({ preventDefault() {} });
+  assert.equal(app.run("findNote('shop').body"), '牛乳とパンと卵を買う', '空にはしない');
+  const filter = app.node('#noteFilter');
+  filter.value = '卵';
+  filter.oninput();
+  const list = app.node('#notesList').innerHTML;
+  assert.match(list, /牛乳とパンと卵を買う/);
+  assert.doesNotMatch(list, /アプリの改善案/);
+  filter.value = '存在しない';
+  filter.oninput();
+  assert.match(app.node('#notesList').innerHTML, /一致するメモはありません/);
+});
+
+test('「元に戻す」は直前の削除・完了・追加を取り消し、その後に別の変更が保存されていれば取り消さない', () => {
+  const app = createPages({ stored: { tasks: [{ id: 'task', title: '片付け' }], events: [], notes: [{ id: 'memo', body: '消すメモ', pinned: false, created: '2026-11-18T09:00:00.000Z' }] } });
+  // メモの削除（確認画面なしですぐ消え、取り消せる）
+  app.run("var snapshot = snapshotData(); data.notes = []; save(); offerUndo('メモを削除しました。', snapshot)");
+  app.run('undoLastAction()');
+  assert.equal(app.run('data.notes.length'), 1);
+  assert.equal(JSON.parse(app.storage.get('dayflow-v2')).notes.length, 1, '取り消した内容を保存する');
+  assert.equal(app.run('undoState'), null);
+  // クイック追加の取り消し
+  app.node('#quickAddInput').value = '明日 打ち合わせの予定';
+  submit(app.node('#quickAddForm'));
+  assert.equal(app.run('data.events.length'), 1);
+  app.run('undoLastAction()');
+  assert.equal(app.run('data.events.length'), 0);
+  // 取り消す前に別の変更が保存された場合は、その変更を消さない
+  app.node('#quickAddInput').value = '明日 面談の予定';
+  submit(app.node('#quickAddForm'));
+  app.run("data.tasks[0].title = '片付け（変更）'; save()");
+  app.run('undoLastAction()');
+  assert.equal(app.run('data.events.length'), 1);
+  assert.equal(app.run('data.tasks[0].title'), '片付け（変更）');
 });

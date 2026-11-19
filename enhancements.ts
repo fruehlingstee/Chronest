@@ -94,6 +94,10 @@
     return changed;
   }
 
+  // 「元に戻す」（app.js）が使えるときだけ、操作前のデータの写しを取って取り消せるようにする。
+  const undoSnapshot = () => typeof snapshotData === 'function' ? snapshotData() : null;
+  const announceUndo = (message, snapshot) => { if (snapshot !== null && typeof offerUndo === 'function') offerUndo(message, snapshot); };
+
   function setTaskCompleted(task, done) {
     if (!task || task.done === Boolean(done)) return;
     retireRepeatAncestors();
@@ -234,10 +238,12 @@
     document.querySelectorAll('[data-toggle]').forEach(input => input.onchange = () => {
       const task = data.tasks.find(item => String(item.id) === input.dataset.toggle);
       if (!task) return;
+      const snapshot = undoSnapshot();
       setTaskCompleted(task, input.checked);
       taskNotice = '';
       save();
       render();
+      if (input.checked) announceUndo(`「${task.title}」を完了にしました。`, snapshot);
     });
     document.querySelectorAll('[data-edit]').forEach(button => button.onclick = () => editTask(button.dataset.edit));
     document.querySelectorAll('[data-focus-task]').forEach(button => button.onclick = () => startFocusTask(button.dataset.focusTask));
@@ -339,9 +345,11 @@
         drawEditor();
       });
       document.querySelector('#askDelete').onclick = () => confirmDelete('このタスクを完全に削除しますか？', () => {
+        const snapshot = undoSnapshot();
         data.tasks = data.tasks.filter(item => String(item.id) !== String(task.id));
         taskNotice = 'タスクを削除しました。';
         save(); closeModal(); render();
+        announceUndo(`「${task.title}」を削除しました。`, snapshot);
       });
     };
     drawEditor();
@@ -539,12 +547,16 @@
       selectCalendarDay(upcoming ? (upcoming.start < anchor ? anchor : upcoming.start) : item.date);
     };
     document.querySelector('#deleteCalendarEvent').onclick = () => confirmDelete(repeating ? 'この予定のすべての回を完全に削除しますか？' : 'この予定を完全に削除しますか？', () => {
+      const snapshot = undoSnapshot();
       data.events = data.events.filter(event => event !== item);
       save(); closeModal(); render();
+      announceUndo(`予定「${item.title}」を削除しました。`, snapshot);
     });
     if (occurrence) document.querySelector('#deleteEventOccurrence').onclick = () => confirmDelete(`${occurrence} の回だけを削除しますか？ほかの回は残ります。`, () => {
+      const snapshot = undoSnapshot();
       item.exceptions = [...new Set([...(item.exceptions || []), occurrence])].sort();
       save(); closeModal(); selectCalendarDay(occurrence);
+      announceUndo(`${occurrence} の「${item.title}」を削除しました。`, snapshot);
     });
     fields.title.focus();
   }
