@@ -4,11 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0b0c0e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="DAYFLOW" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="description" content="DAYFLOW — 個人のためのデイリーダッシュボード" />
   <title>DAYFLOW</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="./styles.css" />
+  <script src="./install.js" defer></script>
 </head>
 <body>
+  <aside class="install-banner" id="installBanner" aria-label="DAYFLOWのインストール">
+    <div class="install-banner-inner">
+      <img class="install-icon" src="./icons/icon-192.png" width="44" height="44" alt="" />
+      <div class="install-copy"><strong>DAYFLOWをホーム画面に</strong><p>スマホから、ワンタップですぐに開く。</p></div>
+      <button class="button install-button" id="installButton" type="button">追加方法を見る</button>
+      <button class="install-dismiss" id="installDismiss" type="button" aria-label="インストール案内を閉じる">×</button>
+      <p id="installStatus" class="install-status" role="status" aria-live="polite" hidden></p>
+    </div>
+  </aside>
   <div class="noise"></div>
   <div id="app"></div>
   <div id="modal-root"></div>

@@ -9,11 +9,11 @@ const { chromium } = require('playwright');
 
 async function main() {
   const root = path.resolve(__dirname, '..');
-  const files = new Set(['index.html', 'app.js', 'enhancements.js', 'tools.js', 'styles.css', 'vendor/qrcode.js']);
+  const files = new Set(['index.html', 'app.js', 'enhancements.js', 'tools.js', 'install.js', 'styles.css', 'vendor/qrcode.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png']);
   const server = http.createServer((request, response) => {
     const file = new URL(request.url, 'http://localhost').pathname.slice(1) || 'index.html';
     if (!files.has(file)) { response.writeHead(404).end(); return; }
-    response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8');
+    response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.webmanifest') ? 'application/manifest+json' : file.endsWith('.png') ? 'image/png' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8');
     fs.createReadStream(path.join(root, file)).pipe(response);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -31,6 +31,42 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin);
     assert.equal(await page.locator('h1').innerText(), '今日を、整える。');
+    assert.equal(await page.locator('#installBanner').isVisible(), true);
+    assert.ok((await page.locator('#installBanner').boundingBox()).y < (await page.locator('.header').boundingBox()).y, 'インストール案内がヘッダーより上に表示される');
+    assert.equal(await page.locator('.install-icon').evaluate(image => image.naturalWidth), 192);
+    const manifest = await page.evaluate(async () => (await fetch(document.querySelector('link[rel="manifest"]').href)).json());
+    assert.equal(manifest.display, 'standalone');
+    assert.ok(manifest.icons.some(icon => icon.sizes === '512x512'));
+    await page.locator('#installButton').click();
+    assert.equal(await page.locator('#installHelpClose').isVisible(), true);
+    await page.locator('#installHelpClose').click();
+
+    const phone = await browser.newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await phone.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
+    const phonePage = await phone.newPage();
+    await phonePage.goto(origin);
+    assert.equal(await phonePage.locator('#installBanner').isVisible(), true);
+    assert.equal(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    if (process.env.DAYFLOW_SCREENSHOTS) {
+      fs.mkdirSync(process.env.DAYFLOW_SCREENSHOTS, { recursive: true });
+      await phonePage.screenshot({ path: path.join(process.env.DAYFLOW_SCREENSHOTS, 'install-mobile.png'), fullPage: true });
+    }
+    await phonePage.locator('#installButton').click();
+    assert.match(await phonePage.locator('[role="dialog"]').innerText(), /ホーム画面に追加/);
+    assert.match(await phonePage.locator('[role="dialog"]').innerText(), /バックアップ/);
+    await phonePage.locator('#installHelpClose').click();
+    await phonePage.evaluate(() => {
+      window.installPromptCalls = 0;
+      const installEvent = new Event('beforeinstallprompt', { cancelable: true });
+      installEvent.prompt = async () => { window.installPromptCalls++; };
+      installEvent.userChoice = Promise.resolve({ outcome: 'accepted' });
+      window.dispatchEvent(installEvent);
+    });
+    await phonePage.locator('#installButton').click();
+    assert.equal(await phonePage.evaluate(() => window.installPromptCalls), 1);
+    await phonePage.evaluate(() => window.dispatchEvent(new Event('appinstalled')));
+    assert.equal(await phonePage.locator('#installBanner').isVisible(), false);
+    await phone.close();
 
     await page.locator('nav [data-page="calendar"]').click();
     await page.locator('#eventDate').fill('2028-02-29');
@@ -176,7 +212,7 @@ async function main() {
     await filePage.locator('[data-tool="qr"]').click();
     assert.equal(await filePage.locator('#qrCanvas').isVisible(), true, 'index.htmlを直接開いてもQRを生成できる');
     assert.deepEqual(errors, []);
-    console.log('ブラウザ確認成功: 全繰り返しの完了/取消で件数不変、次回予約の再読み込み、編集下書き・キャンセル・保存・並び順、予定編集、日本語QR・PNG、390px表示、ページ外タイマー完了。');
+    console.log('ブラウザ確認成功: 最上部のインストール案内・iPhone手順・manifest・アイコン・インストール操作、タスク増殖防止、編集保存、カレンダー、日本語QR、390px表示、ページ外タイマー。');
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));
