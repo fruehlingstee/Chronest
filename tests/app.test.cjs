@@ -373,3 +373,19 @@ test('completion history survives reload and malformed entries are dropped', () 
   assert.equal(recovered.run('data.completions.length'), 1);
   assert.equal(recovered.run('data.completions[0].title'), '正しい');
 });
+
+test('event location and note survive reload and are limited in length', () => {
+  const long = 'あ'.repeat(2500);
+  const app = createApp({ stored: JSON.stringify({ tasks: [], notes: [], events: [
+    { id: 'e', title: '会議', date: '2026-11-20', location: '本社', note: '資料' },
+    { id: 'old', title: '旧形式', date: '2026-11-20' },
+    { id: 'long', title: '長いメモ', date: '2026-11-20', note: long }
+  ] }) });
+  assert.deepEqual([app.run('data.events[0].location'), app.run('data.events[0].note')], ['本社', '資料']);
+  assert.deepEqual([app.run('data.events[1].location'), app.run('data.events[1].note')], ['', '']);
+  assert.equal(app.run('data.events[2].note.length'), 2000);
+  const recovered = createApp({ stored: JSON.stringify({ tasks: [], notes: [], events: [{ id: 'bad', title: '不正', date: '2026-11-20', location: 123 }] }) });
+  assert.equal(recovered.run('data.events[0].location'), '');
+  recovered.run('save()');
+  assert.ok([...recovered.storage.keys()].some(key => key.startsWith('dayflow-v2-recovery-')), '文字列でない場所は復旧扱い');
+});

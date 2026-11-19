@@ -140,3 +140,12 @@ test('終了時刻の表記と、開始時刻との前後関係を確かめる',
   assert.equal(schedule.eventEndTimeError({ date: '2026-11-20', endDate: '2026-11-21', time: '22:00', endTime: '07:00' }), '', '翌日以降に終わる予定は朝の時刻でもよい');
   assert.equal(schedule.eventEndTimeError({ date: '2026-11-20', endDate: '2026-11-20', time: '', endTime: '11:00' }), '終了時刻は開始時刻と一緒に入力してください。');
 });
+
+test('場所・メモのURLだけを安全なリンクにし、ほかの文字はすべてエスケープする', () => {
+  const schedule = loadSchedule();
+  assert.equal(schedule.eventTextHtml('第2会議室'), '第2会議室');
+  assert.equal(schedule.eventTextHtml('参加URL https://meet.example.com/abc。'), '参加URL <a href="https://meet.example.com/abc" target="_blank" rel="noopener noreferrer">https://meet.example.com/abc</a>。', '末尾の句読点はリンクに含めない');
+  assert.equal(schedule.eventTextHtml('<b>太字</b> & "引用"'), '&lt;b&gt;太字&lt;/b&gt; &amp; &quot;引用&quot;');
+  assert.equal(schedule.eventTextHtml('javascript:alert(1) http://a.test/?q=1&r=<x>'), 'javascript:alert(1) <a href="http://a.test/?q=1&amp;r=" target="_blank" rel="noopener noreferrer">http://a.test/?q=1&amp;r=</a>&lt;x&gt;', 'http(s) 以外はリンクにしない');
+  assert.equal(schedule.eventTextHtml(''), '');
+});

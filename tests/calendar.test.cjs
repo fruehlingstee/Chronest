@@ -19,6 +19,8 @@ function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = []
       const id = tag[0].match(/\bid="([^"]+)"/);
       if (id) nodes.set('#' + id[1], node(unescape(tag[0].match(/\bvalue="([^"]*)"/)?.[1] || '')));
     }
+    // テキストエリアは、開始タグと終了タグの間の文字が値になる。
+    for (const area of html.matchAll(/<textarea\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/g)) nodes.set('#' + area[1], node(unescape(area[2])));
     // 選択欄は selected の付いた選択肢（無ければ先頭）を値にする。実際のブラウザと同じ決まり方。
     for (const select of html.matchAll(/<select\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
       const options = [...select[2].matchAll(/<option value="([^"]*)"([^>]*)>/g)];
@@ -684,4 +686,48 @@ test('タイムラインでは終了時刻までの長さで予定を描く', ()
   context.document.querySelector('[data-calendar-view="day"]').onclick();
   assert.match(context.html, /data-event-edit="class" data-event-date="2026-11-19" style="top:396px;height:63px;/, '9:00 から 1.5時間 × 44px − 枠の余白');
   assert.match(context.html, /<time>09:00–10:30<\/time> 講義/);
+});
+
+test('予定に場所とメモを付けて作成・編集でき、一覧ではURLを押せるリンクにする', () => {
+  const { context, nodes, submit } = calendarHarness({ date: '2026-11-19T12:00:00' });
+  nodes.get('#eventDate').value = '2026-11-20';
+  nodes.get('#eventEndDate').value = '';
+  nodes.get('#eventTitle').value = 'オンライン面談';
+  nodes.get('#eventLocation').value = '  https://meet.example.com/xyz  ';
+  nodes.get('#eventNote').value = '資料を共有する\n<準備>';
+  submit();
+  const event = context.data.events[0];
+  assert.deepEqual([event.location, event.note], ['https://meet.example.com/xyz', '資料を共有する\n<準備>'], '前後の空白は除く');
+  const agenda = selectedAgenda(context.html);
+  assert.match(agenda, /<small class="event-place">場所 <a href="https:\/\/meet.example.com\/xyz" target="_blank" rel="noopener noreferrer">/);
+  assert.match(agenda, /<small class="event-note">資料を共有する\n&lt;準備&gt;<\/small>/);
+  assert.match(monthAgenda(context.html), /event-place/);
+  assert.doesNotMatch(monthAgenda(context.html), /event-note/, '月の一覧は場所だけ');
+  assert.equal(nodes.get('#eventLocation').value, '', '追加後は空に戻す');
+  context.calendarTest.editCalendarEvent(event.id);
+  assert.equal(nodes.get('#editEventLocation').value, 'https://meet.example.com/xyz');
+  assert.equal(nodes.get('#editEventNote').value, '資料を共有する\n<準備>');
+  nodes.get('#editEventLocation').value = '本社 3F';
+  nodes.get('#editEventNote').value = '';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.deepEqual([event.location, event.note], ['本社 3F', '']);
+  assert.match(calendarDay(context.html, '2026-11-20'), /オンライン面談（本社 3F）を編集/);
+});
+
+test('入力途中の場所とメモは月を移動しても残り、見出しに要約を出す', () => {
+  const { context, nodes } = calendarHarness();
+  nodes.get('#eventLocation').value = '体育館';
+  nodes.get('#eventLocation').oninput();
+  nodes.get('#eventNote').value = '上履き';
+  nodes.get('#eventNote').oninput();
+  nodes.get('#nextMonth').onclick();
+  assert.equal(nodes.get('#eventLocation').value, '体育館');
+  assert.equal(nodes.get('#eventNote').value, '上履き');
+  assert.match(context.html, /calendar-options-summary">場所 体育館・メモあり</);
+});
+
+test('場所つきの予定の通知には場所も含める', () => {
+  const events = [{ id: 'm', date: '2026-11-19', endDate: '2026-11-19', time: '13:00', title: '面談', reminder: 10, remindedStart: '', location: '第2会議室' }];
+  const { context } = calendarHarness({ date: '2026-11-19T12:52:00', events, notificationPermission: 'granted' });
+  assert.equal(context.notifications[0].body, '11/19 13:00 面談 @ 第2会議室');
 });

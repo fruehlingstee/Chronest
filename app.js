@@ -101,7 +101,8 @@ function normalizeData(input, options = {}) {
       (item.time === undefined || item.time === '' || Boolean(time(item.time))) &&
       (item.endTime === undefined || item.endTime === '' || (Boolean(time(item.endTime)) && !eventEndTimeError({ ...item, time: time(item.time), endDate: isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date }))) &&
       eventRepeatValid(item) && reminderValid(item) &&
-      (item.color === undefined || item.color === '' || Boolean(eventColorChoice(item.color)))
+      (item.color === undefined || item.color === '' || Boolean(eventColorChoice(item.color))) &&
+      optionalString(item, 'location') && optionalString(item, 'note')
     )), item => {
       const endDate = isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date;
       let repeat = knownRepeat(item.repeat) ? item.repeat : 'none';
@@ -115,7 +116,8 @@ function normalizeData(input, options = {}) {
         repeatUntil: repeat !== 'none' && isDateKey(item.repeatUntil) && item.repeatUntil >= item.date ? item.repeatUntil : '',
         exceptions: repeat !== 'none' && Array.isArray(item.exceptions) ? [...new Set(item.exceptions.filter(isDateKey))].sort() : [],
         reminder: eventReminderMinutes(item), remindedStart: date(item.remindedStart),
-        color: eventColorChoice(item.color)
+        color: eventColorChoice(item.color),
+        location: text(item.location).slice(0, EVENT_LOCATION_MAX), note: text(item.note).slice(0, EVENT_NOTE_MAX)
       };
     }),
     notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created), ...(typeof item.updated === 'string' && Number.isFinite(Date.parse(item.updated)) ? { updated: item.updated } : {}) })),

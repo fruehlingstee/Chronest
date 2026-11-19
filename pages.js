@@ -34,7 +34,7 @@
     if (!result.total) return '<div class="empty">一致するものはありません</div>';
     const group = (label, items, row) => items.length ? `<div class="search-group"><h4>${label} <span>${items.length}</span></h4>${items.map(row).join('')}</div>` : '';
     return group('タスク', result.tasks, task => `<button type="button" class="search-row" data-search-task="${esc(task.id)}"><span class="${task.done ? 'struck' : ''}">${esc(task.title)}</span><small>${task.done ? '完了' : task.due ? '期限 ' + esc(task.due) : '期限なし'}</small></button>`) +
-      group('予定', result.events, event => `<button type="button" class="search-row" data-search-event="${esc(event.date)}"><span><span class="event-swatch event-color-${eventColor(event, { start: event.date, end: eventEndKey(event) })}" aria-hidden="true"></span>${esc(event.title)}</span><small>${esc(event.date)}${eventRepeat(event) !== 'none' ? ' · ↻ ' + esc(eventRepeatLabel(event)) : ''}</small></button>`) +
+      group('予定', result.events, event => `<button type="button" class="search-row" data-search-event="${esc(event.date)}"><span><span class="event-swatch event-color-${eventColor(event, { start: event.date, end: eventEndKey(event) })}" aria-hidden="true"></span>${esc(event.title)}</span><small>${esc(event.date)}${event.location ? ' · ' + esc(event.location) : ''}${eventRepeat(event) !== 'none' ? ' · ↻ ' + esc(eventRepeatLabel(event)) : ''}</small></button>`) +
       group('メモ', result.notes, note => `<button type="button" class="search-row" data-search-note="${esc(note.id)}"><span>${esc(note.body.slice(0, 80))}</span><small>メモ</small></button>`) +
       group('ブックマーク', result.bookmarks, mark => `<a class="search-row" href="${esc(mark.url)}" target="_blank" rel="noopener noreferrer"><span>${esc(mark.title || mark.url)}</span><small>${esc(mark.url)}</small></a>`);
   }
@@ -69,7 +69,7 @@
           ${openTasks.length > 6 ? `<button type="button" class="ghost dash-more" data-page="tasks">ほか${openTasks.length - 6}件をタスク画面で見る</button>` : ''}
         </div>
         <div class="panel"><h3>今日の予定</h3>
-          ${events.map(({ event, occurrence }) => `<button type="button" class="dash-row dash-event" data-dash-event="${esc(today)}"><time>${esc(eventTimeLabel(event, today))}</time><span class="dash-copy"><span class="dash-title"><span class="event-swatch event-color-${eventColor(event, occurrence)}" aria-hidden="true"></span>${esc(event.title)}</span>${eventRepeat(event) !== 'none' ? `<small class="meta">↻ ${esc(eventRepeatLabel(event))}</small>` : ''}</span></button>`).join('') || '<div class="empty">今日の予定はありません</div>'}
+          ${events.map(({ event, occurrence }) => `<button type="button" class="dash-row dash-event" data-dash-event="${esc(today)}"><time>${esc(eventTimeLabel(event, today))}</time><span class="dash-copy"><span class="dash-title"><span class="event-swatch event-color-${eventColor(event, occurrence)}" aria-hidden="true"></span>${esc(event.title)}</span>${eventRepeat(event) !== 'none' || event.location ? `<small class="meta">${[event.location ? `場所 ${esc(event.location)}` : '', eventRepeat(event) !== 'none' ? `↻ ${esc(eventRepeatLabel(event))}` : ''].filter(Boolean).map(part => `<span>${part}</span>`).join('')}</small>` : ''}</span></button>`).join('') || '<div class="empty">今日の予定はありません</div>'}
         </div>
         <div class="panel"><h3>集中</h3>
           <p class="dash-focus-total"><b>${focus.today}</b>分 <span>· ${todaySessions.length}回 · 7日間 ${focus.week}分</span></p>
@@ -98,11 +98,11 @@
     const result = parseQuickInput(text, new Date());
     if (result.error) { quickNotice = result.error; return false; }
     if (result.kind === 'event') {
-      data.events.push({ id: newId('event'), title: result.title, date: result.date, endDate: result.endDate, time: result.time, endTime: result.endTime, repeat: 'none', repeatUntil: '', exceptions: [], reminder: null, remindedStart: '', color: '' });
+      data.events.push({ id: newId('event'), title: result.title, date: result.date, endDate: result.endDate, time: result.time, endTime: result.endTime, repeat: 'none', repeatUntil: '', exceptions: [], reminder: null, remindedStart: '', color: '', location: result.location, note: '' });
       quickNotice = `予定「${result.title}」を${shortDate(result.date)}${result.endDate !== result.date ? '〜' + shortDate(result.endDate) : ''}に追加しました。`;
     } else {
       data.tasks.unshift({
-        id: newId('task'), title: result.title, priority: result.priority, due: result.date, note: '', done: false,
+        id: newId('task'), title: result.title, priority: result.priority, due: result.date, note: result.location ? `場所: ${result.location}` : '', done: false, // タスクには場所の欄が無いので、@ で書いた場所はメモに残す。
         created: new Date().toISOString(), repeat: 'none', subtasks: [],
         reminderAt: result.date && result.time ? `${result.date}T${result.time}` : '', notified: false, completedOn: ''
       });
@@ -165,12 +165,12 @@
     return `<section class="panel timeline-panel" aria-label="${esc(label)}のタイムライン" style="--days:${days.length};--hour:${HOUR_HEIGHT}px">
       <div class="timeline-nav">${prev ? `<button type="button" class="ghost" data-calendar-select="${prev}" aria-label="前の期間">←</button>` : '<span></span>'}<strong>${esc(label)}</strong>${next ? `<button type="button" class="ghost" data-calendar-select="${next}" aria-label="次の期間">→</button>` : '<span></span>'}</div>
       <div class="timeline-head"><span></span>${days.map(key => `<button type="button" class="timeline-day ${key === today ? 'is-today' : ''} ${key === selected ? 'is-selected' : ''}" data-calendar-select="${key}" aria-label="${key}を選ぶ"><small>${weekdayName(key)}</small>${Number(key.slice(8, 10))}</button>`).join('')}</div>
-      <div class="timeline-allday"><span class="timeline-label">終日</span>${layouts.map(day => `<div class="timeline-allday-cell">${day.allDay.map(({ event, occurrence, phase }) => `<button type="button" class="timeline-chip event-color-${eventColor(event, occurrence)}" data-event-edit="${esc(event.id)}" data-event-date="${esc(occurrence.start)}" title="${esc(event.title)}">${phase === 'single' ? '' : `<span class="event-phase">${phaseLabel[phase]}</span>`}${esc(event.title)}</button>`).join('')}${day.tasks.map(task => `<button type="button" class="timeline-chip task-chip" data-calendar-task="${esc(task.id)}" title="期限 ${esc(task.title)}">期限 ${esc(task.title)}</button>`).join('')}</div>`).join('')}</div>
+      <div class="timeline-allday"><span class="timeline-label">終日</span>${layouts.map(day => `<div class="timeline-allday-cell">${day.allDay.map(({ event, occurrence, phase }) => `<button type="button" class="timeline-chip event-color-${eventColor(event, occurrence)}" data-event-edit="${esc(event.id)}" data-event-date="${esc(occurrence.start)}" title="${esc(event.title)}${event.location ? ' · ' + esc(event.location) : ''}">${phase === 'single' ? '' : `<span class="event-phase">${phaseLabel[phase]}</span>`}${esc(event.title)}</button>`).join('')}${day.tasks.map(task => `<button type="button" class="timeline-chip task-chip" data-calendar-task="${esc(task.id)}" title="期限 ${esc(task.title)}">期限 ${esc(task.title)}</button>`).join('')}</div>`).join('')}</div>
       <div class="timeline-scroll" id="timelineScroll">
         <div class="timeline-grid">
           <div class="timeline-hours" aria-hidden="true">${Array.from({ length: 24 }, (_, hour) => `<span style="top:${hour * HOUR_HEIGHT}px">${hour}:00</span>`).join('')}</div>
           ${layouts.map(day => `<div class="timeline-column ${day.key === today ? 'is-today' : ''}" aria-label="${day.key}の時刻つき予定">
-            ${day.timed.map(item => `<button type="button" class="timeline-event event-color-${eventColor(item.event, item.occurrence)}" data-event-edit="${esc(item.event.id)}" data-event-date="${esc(item.occurrence.start)}" style="top:${item.start / 60 * HOUR_HEIGHT}px;height:${Math.max(item.end - item.start, 20) / 60 * HOUR_HEIGHT - 3}px;left:calc(${item.lane} * 100% / ${item.lanes});width:calc(100% / ${item.lanes})" title="${esc(eventTimeRange(item.event))} ${esc(item.event.title)}"><time>${esc(item.phase === 'end' ? `〜${item.event.endTime}` : eventTimeRange(item.event))}</time> ${esc(item.event.title)}</button>`).join('')}
+            ${day.timed.map(item => `<button type="button" class="timeline-event event-color-${eventColor(item.event, item.occurrence)}" data-event-edit="${esc(item.event.id)}" data-event-date="${esc(item.occurrence.start)}" style="top:${item.start / 60 * HOUR_HEIGHT}px;height:${Math.max(item.end - item.start, 20) / 60 * HOUR_HEIGHT - 3}px;left:calc(${item.lane} * 100% / ${item.lanes});width:calc(100% / ${item.lanes})" title="${esc(eventTimeRange(item.event))} ${esc(item.event.title)}${item.event.location ? ' · ' + esc(item.event.location) : ''}"><time>${esc(item.phase === 'end' ? `〜${item.event.endTime}` : eventTimeRange(item.event))}</time> ${esc(item.event.title)}</button>`).join('')}
             ${day.key === today ? `<span class="timeline-now" style="top:${nowMinutes / 60 * HOUR_HEIGHT}px" aria-hidden="true"></span>` : ''}
           </div>`).join('')}
         </div>

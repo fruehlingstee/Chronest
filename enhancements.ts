@@ -366,7 +366,7 @@
 
   let selectedDay = todayKey();
   // 作成フォームの「繰り返し」などの初期値。予定を追加した後はここへ戻す。
-  const emptyEventOptions = () => ({ repeat: 'none', repeatUntil: '', reminder: '', color: '' });
+  const emptyEventOptions = () => ({ repeat: 'none', repeatUntil: '', reminder: '', color: '', location: '', note: '' });
   let eventDraft = { date: selectedDay, endDate: selectedDay, time: '', endTime: '', title: '', ...emptyEventOptions() };
   let eventDraftStart = selectedDay;
   let eventOptionsOpen = false;
@@ -419,7 +419,9 @@
       repeat: document.querySelector('#eventRepeat').value || 'none',
       repeatUntil: document.querySelector('#eventRepeatUntil').value,
       reminder: document.querySelector('#eventReminder').value,
-      color: document.querySelector('#eventColor').value
+      color: document.querySelector('#eventColor').value,
+      location: document.querySelector('#eventLocation').value,
+      note: document.querySelector('#eventNote').value
     };
   }
 
@@ -464,7 +466,9 @@
       endTime: fields.time.value ? fields.endTime.value : '',
       repeat, repeatUntil: repeat === 'none' ? '' : fields.repeatUntil.value,
       reminder: fields.reminder.value === '' ? null : Number(fields.reminder.value),
-      color: eventColorChoice(fields.color.value)
+      color: eventColorChoice(fields.color.value),
+      location: fields.location.value.trim().slice(0, EVENT_LOCATION_MAX),
+      note: fields.note.value.trim().slice(0, EVENT_NOTE_MAX)
     };
   }
 
@@ -510,7 +514,9 @@
           <div><label for="editEventRepeatUntil">繰り返しの終了日（空欄は無期限）</label><input class="input" id="editEventRepeatUntil" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(item.repeatUntil || '')}" ${repeating ? '' : 'disabled'}></div>
           <div><label for="editEventReminder">通知</label><select class="select" id="editEventReminder">${selectOptions(EVENT_REMINDER_OPTIONS, eventReminderMinutes(item) ?? '')}</select></div>
           <div><label for="editEventColor">色</label><select class="select" id="editEventColor">${selectOptions(EVENT_COLOR_OPTIONS, eventColorChoice(item.color))}</select></div>
+          <div class="modal-wide"><label for="editEventLocation">場所（URLも可）</label><input class="input" id="editEventLocation" maxlength="${EVENT_LOCATION_MAX}" value="${esc(item.location || '')}"></div>
         </div>
+        <label for="editEventNote">メモ</label><textarea id="editEventNote" rows="3" maxlength="${EVENT_NOTE_MAX}">${esc(item.note || '')}</textarea>
         <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。${repeating ? '繰り返し予定の変更は、すべての回に反映されます。' : ''}通知はChronestを開いている間に届き、終日の予定は当日9:00を基準にします。</p>
         <div class="modal-actions"><button class="button dim" type="button" id="cancelEventEdit">キャンセル</button><button class="button" type="submit">保存</button></div>
       </form>
@@ -520,7 +526,8 @@
       title: document.querySelector('#editEventTitle'), date: document.querySelector('#editEventDate'),
       endDate: document.querySelector('#editEventEndDate'), time: document.querySelector('#editEventTime'), endTime: document.querySelector('#editEventEndTime'),
       repeat: document.querySelector('#editEventRepeat'), repeatUntil: document.querySelector('#editEventRepeatUntil'),
-      reminder: document.querySelector('#editEventReminder'), color: document.querySelector('#editEventColor')
+      reminder: document.querySelector('#editEventReminder'), color: document.querySelector('#editEventColor'),
+      location: document.querySelector('#editEventLocation'), note: document.querySelector('#editEventNote')
     };
     let previousStart = item.date;
     [fields.title, fields.endDate, fields.time, fields.endTime, fields.repeatUntil].forEach(input => input.oninput = () => input.setCustomValidity(''));
@@ -612,6 +619,9 @@
       if (extra) parts.push(extra);
       return parts.length ? `<small class="event-range-label">${parts.map(esc).join(' · ')}</small>` : '';
     };
+    // 場所とメモ（URLは押せるリンクにする）。月の一覧では場所だけを出して短く保つ。
+    const extras = (event, withNote = true) => (event.location ? `<small class="event-place">場所 ${eventTextHtml(event.location)}</small>` : '') +
+      (withNote && event.note ? `<small class="event-note">${eventTextHtml(event.note)}</small>` : '');
     // 一覧のタイトルの前に、カレンダー上と同じ色の丸を付ける（色は補助。文字情報だけでも区別できる）。
     const titleWithSwatch = ({ event, occurrence }) => `<span class="agenda-event-title"><span class="event-swatch event-color-${eventColor(event, occurrence)}" aria-hidden="true"></span>${esc(event.title)}</span>`;
     const editButton = ({ event, occurrence }) => `<button class="ghost" data-event-edit="${esc(event.id)}" data-event-date="${esc(occurrence.start)}" aria-label="${esc(event.title)}を編集">編集</button>`;
@@ -624,7 +634,7 @@
       const dayItems = dayEvents.map(({ event, occurrence }) => {
         const phase = occurrencePhase(occurrence, key), multiDay = phase !== 'single';
         const repeatText = eventRepeatLabel(event);
-        const fullLabel = [rangeLabel(occurrence), event.time ? `開始 ${event.time}` : '終日', phaseLabel[phase], repeatText, event.title].filter(Boolean).join(' ');
+        const fullLabel = [rangeLabel(occurrence), event.time ? `開始 ${event.time}` : '終日', phaseLabel[phase], repeatText, event.title].filter(Boolean).join(' ') + (event.location ? `（${event.location}）` : '');
         const color = eventColor(event, occurrence);
         return {
           kind: multiDay ? 'range' : 'event', color,
@@ -652,7 +662,9 @@
     const optionSummary = [
       eventDraft.repeat !== 'none' ? optionLabel(EVENT_REPEAT_OPTIONS, eventDraft.repeat) : '',
       eventDraft.reminder !== '' ? `通知 ${optionLabel(EVENT_REMINDER_OPTIONS, eventDraft.reminder)}` : '',
-      eventDraft.color ? `色 ${optionLabel(EVENT_COLOR_OPTIONS, eventDraft.color)}` : ''
+      eventDraft.color ? `色 ${optionLabel(EVENT_COLOR_OPTIONS, eventDraft.color)}` : '',
+      eventDraft.location.trim() ? `場所 ${eventDraft.location.trim().slice(0, 20)}` : '',
+      eventDraft.note.trim() ? 'メモあり' : ''
     ].filter(Boolean).join('・');
     return `<main class="page calendar-page">
       <div class="page-head"><h1 class="title" aria-live="polite">${year}年 ${currentMonth + 1}月</h1><div class="calendar-navigation"><button class="ghost" id="prevMonth" aria-label="前の月" ${year === 1 && currentMonth === 0 ? 'disabled' : ''}>←</button><button class="ghost" id="todayMonth">今日</button><button class="ghost" id="nextMonth" aria-label="次の月" ${year === 9999 && currentMonth === 11 ? 'disabled' : ''}>→</button></div></div>
@@ -664,8 +676,10 @@
         <div class="field calendar-title-field"><label for="eventTitle">タイトル</label><input class="input" id="eventTitle" maxlength="120" required placeholder="新しい予定" value="${esc(eventDraft.title)}"></div>
         <button class="button" type="submit">予定を追加</button>
         <details class="calendar-options" id="eventOptions" ${eventOptionsOpen || optionSummary ? 'open' : ''}>
-          <summary>繰り返し・通知・色${optionSummary ? `<span class="calendar-options-summary">${esc(optionSummary)}</span>` : ''}</summary>
+          <summary>場所・メモ・繰り返し・通知・色${optionSummary ? `<span class="calendar-options-summary">${esc(optionSummary)}</span>` : ''}</summary>
           <div class="calendar-options-grid">
+            <div class="field calendar-options-wide"><label for="eventLocation">場所（URLも可）</label><input class="input" id="eventLocation" maxlength="${EVENT_LOCATION_MAX}" placeholder="例: 第2会議室 / https://…" value="${esc(eventDraft.location)}"></div>
+            <div class="field calendar-options-wide"><label for="eventNote">メモ</label><textarea id="eventNote" rows="3" maxlength="${EVENT_NOTE_MAX}" placeholder="持ち物・連絡先など">${esc(eventDraft.note)}</textarea></div>
             <div class="field"><label for="eventRepeat">繰り返し</label><select class="select" id="eventRepeat">${selectOptions(EVENT_REPEAT_OPTIONS, eventDraft.repeat)}</select></div>
             <div class="field"><label for="eventRepeatUntil">繰り返しの終了日（空欄は無期限）</label><input class="select" id="eventRepeatUntil" type="date" min="${esc(eventDraft.date)}" max="9999-12-31" value="${esc(eventDraft.repeatUntil)}" ${eventDraft.repeat === 'none' ? 'disabled' : ''}></div>
             <div class="field"><label for="eventReminder">通知</label><select class="select" id="eventReminder">${selectOptions(EVENT_REMINDER_OPTIONS, eventDraft.reminder)}</select></div>
@@ -678,12 +692,12 @@
       <p class="calendar-period-hint">開始日〜終了日をまとめて登録。日付を選ぶと下に予定を表示します。時刻は開始日のみに適用されます。</p>
       <section class="panel calendar-panel" aria-label="${year}年${currentMonth + 1}月のカレンダー"><div class="calendar">${cells.join('')}</div></section>
       <section class="panel calendar-agenda" aria-labelledby="selectedDayHeading"><h3 class="calendar-selection-heading" id="selectedDayHeading">${esc(selectedDay)} の予定 <span>${selectedEvents.length + selectedTasks.length}件</span></h3>
-        ${selectedEvents.map(item => `<div class="agenda-row"><time>${esc(timeLabel(item, selectedDay))}</time><span class="agenda-event-copy">${titleWithSwatch(item)}${details(item)}</span>${editButton(item)}</div>`).join('')}
+        ${selectedEvents.map(item => `<div class="agenda-row"><time>${esc(timeLabel(item, selectedDay))}</time><span class="agenda-event-copy">${titleWithSwatch(item)}${details(item)}${extras(item.event)}</span>${editButton(item)}</div>`).join('')}
         ${selectedTasks.map(task => `<div class="agenda-row"><time class="tag">期限</time><span>${esc(task.title)}</span><button class="ghost" data-calendar-task="${esc(task.id)}" aria-label="タスク ${esc(task.title)}を編集">タスクを編集</button></div>`).join('')}
         ${selectedEvents.length || selectedTasks.length ? '' : '<div class="empty">この日の予定・タスク期限はありません</div>'}
       </section>
       <section class="panel calendar-agenda" aria-labelledby="monthAgendaHeading"><h3 id="monthAgendaHeading">この月の予定 · ${monthRows.length}件</h3>
-        ${monthRows.map(row => `<div class="agenda-row month-agenda-row"><button class="ghost agenda-date" data-calendar-select="${esc(row.visibleDate)}" aria-label="${esc(row.visibleDate)}の予定を表示、予定期間 ${esc(rangeLabel(row.occurrence))}">${esc(row.visibleDate.slice(5))}</button><time>${esc(timeLabel(row, row.visibleDate))}</time><span class="agenda-event-copy">${titleWithSwatch(row)}${details(row, eventRepeat(row.event) !== 'none' ? `この月${row.count}回` : '')}</span>${editButton(row)}</div>`).join('') || '<div class="empty">この月の予定はありません</div>'}
+        ${monthRows.map(row => `<div class="agenda-row month-agenda-row"><button class="ghost agenda-date" data-calendar-select="${esc(row.visibleDate)}" aria-label="${esc(row.visibleDate)}の予定を表示、予定期間 ${esc(rangeLabel(row.occurrence))}">${esc(row.visibleDate.slice(5))}</button><time>${esc(timeLabel(row, row.visibleDate))}</time><span class="agenda-event-copy">${titleWithSwatch(row)}${details(row, eventRepeat(row.event) !== 'none' ? `この月${row.count}回` : '')}${extras(row.event, false)}</span>${editButton(row)}</div>`).join('') || '<div class="empty">この月の予定はありません</div>'}
       </section>
     </main>`;
   };
@@ -740,7 +754,7 @@
       const start = eventReminderDue(event, now);
       if (!start) return;
       const when = `${Number(start.slice(5, 7))}/${Number(start.slice(8, 10))} ${event.time || '終日'}`;
-      showAppNotification(`${when} ${event.title}`, `event-${event.id}-${start}`);
+      showAppNotification(`${when} ${event.title}${event.location ? ` @ ${event.location}` : ''}`, `event-${event.id}-${start}`);
       event.remindedStart = start;
       changed = true;
     });
@@ -838,7 +852,8 @@
         title: document.querySelector('#eventTitle'), date: document.querySelector('#eventDate'),
         endDate: document.querySelector('#eventEndDate'), time: document.querySelector('#eventTime'), endTime: document.querySelector('#eventEndTime'),
         repeat: document.querySelector('#eventRepeat'), repeatUntil: document.querySelector('#eventRepeatUntil'),
-        reminder: document.querySelector('#eventReminder'), color: document.querySelector('#eventColor')
+        reminder: document.querySelector('#eventReminder'), color: document.querySelector('#eventColor'),
+        location: document.querySelector('#eventLocation'), note: document.querySelector('#eventNote')
       };
       [fields.title, fields.endDate, fields.time, fields.endTime, fields.repeatUntil].forEach(input => input.oninput = () => {
         input.setCustomValidity('');
@@ -846,6 +861,7 @@
       });
       fields.reminder.onchange = () => rememberEventDraft();
       fields.color.onchange = () => rememberEventDraft();
+      [fields.location, fields.note].forEach(input => input.oninput = () => rememberEventDraft());
       fields.repeat.onchange = () => {
         fields.endDate.setCustomValidity('');
         fields.repeatUntil.disabled = fields.repeat.value === 'none';

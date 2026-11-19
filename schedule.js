@@ -187,6 +187,27 @@ function eventReminderLabel(event) {
   return `${dayName}${Math.floor(inDay / 60)}:${String(inDay % 60).padStart(2, '0')}`;
 }
 
+// ---- 予定の場所・メモ ----
+const EVENT_LOCATION_MAX = 200, EVENT_NOTE_MAX = 2000;
+
+function scheduleEscape(text) {
+  return String(text ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+
+// 場所・メモを表示用のHTMLにする。http(s) で始まるURLだけを新しいタブで開くリンクにし、それ以外はすべてエスケープする。
+// URLの末尾に付いた句読点や閉じかっこはリンクに含めない（「…/abc。」の「。」など）。
+function eventTextHtml(text) {
+  const source = String(text || '');
+  let html = '', last = 0;
+  for (const match of source.matchAll(/https?:\/\/[^\s<>"'　]+/g)) {
+    const url = match[0].replace(/[)\]}.,;:!?。、，．！？」』）]+$/u, '');
+    if (!/^https?:\/\/./.test(url)) continue;
+    html += scheduleEscape(source.slice(last, match.index)) + `<a href="${scheduleEscape(url)}" target="_blank" rel="noopener noreferrer">${scheduleEscape(url)}</a>`;
+    last = match.index + url.length;
+  }
+  return html + scheduleEscape(source.slice(last));
+}
+
 // ---- 予定の色 ----
 // '' は自動（1日だけの予定は青、期間の予定は緑。色分けを追加する前と同じ見た目）。
 const EVENT_COLOR_OPTIONS = [['', '自動（1日は青・期間は緑）'], ['blue', '青'], ['green', '緑'], ['purple', '紫'], ['pink', 'ピンク'], ['gray', 'グレー']];

@@ -199,3 +199,9 @@ input::-webkit-calendar-picker-indicator{opacity:1;cursor:pointer;min-width:20px
 /* 完了履歴 */
 .done-bars .focus-bar-fill{background:var(--blue)}
 .stats-grid h3 small{color:var(--muted);font-weight:400;font-size:12px}
+/* 予定の場所・メモ */
+.calendar-options-wide,.modal-grid .modal-wide{grid-column:1/-1}
+.calendar-options-grid textarea{width:100%;min-height:72px}
+.event-place,.event-note{display:block;margin-top:4px;color:var(--muted);font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.event-note{padding-left:8px;border-left:2px solid var(--line)}
+.event-place a,.event-note a{color:var(--blue);text-decoration:underline}

@@ -17,8 +17,8 @@ const thursday = new Date(2026, 10, 19, 12, 0); // 2026-11-19（木）
 test('時刻つきの文は予定、日付だけや「までに」はタスクとして解析する', () => {
   const insights = load();
   const parse = text => plain(insights.parseQuickInput(text, thursday));
-  assert.deepEqual(parse('明日15時 会議'), { kind: 'event', title: '会議', date: '2026-11-20', endDate: '2026-11-20', time: '15:00', endTime: '', priority: 'medium' });
-  assert.deepEqual(parse('金曜までにレポート'), { kind: 'task', title: 'レポート', date: '2026-11-20', endDate: '2026-11-20', time: '', endTime: '', priority: 'medium' });
+  assert.deepEqual(parse('明日15時 会議'), { kind: 'event', title: '会議', date: '2026-11-20', endDate: '2026-11-20', time: '15:00', endTime: '', priority: 'medium', location: '' });
+  assert.deepEqual(parse('金曜までにレポート'), { kind: 'task', title: 'レポート', date: '2026-11-20', endDate: '2026-11-20', time: '', endTime: '', priority: 'medium', location: '' });
   assert.equal(parse('10:30 歯医者').date, '2026-11-19', '日付が無い予定は今日');
   assert.equal(parse('午後3時半 打ち合わせ').time, '15:30');
   assert.equal(parse('牛乳を買う').kind, 'task');
@@ -159,4 +159,15 @@ test('完了の履歴から直近7日間の完了数・連続日数・よく完�
   assert.deepEqual(summary.topTasks.map(item => [item.title, item.count, item.last]), [['朝の散歩', 3, '2026-11-19'], ['レポート', 1, '2026-11-19'], ['旧タスク', 1, '2026-11-01']], '名前を変えても同じタスクとして数え、30日より前は含めない');
   const tasks = [{ done: false, completedOn: '' }];
   assert.equal(plain(insights.taskSummary(tasks, thursday, completions)).completedThisWeek, 4, '繰り返しで未完了に戻ったタスクの完了も数える');
+});
+
+test('「@場所」を予定の場所として読み取り、検索では場所とメモも対象にする', () => {
+  const insights = load();
+  const meeting = plain(insights.parseQuickInput('明日15時 定例 @第2会議室', thursday));
+  assert.deepEqual([meeting.title, meeting.location, meeting.time], ['定例', '第2会議室', '15:00']);
+  assert.equal(plain(insights.parseQuickInput('明日 歯医者の予定 ＠3F', thursday)).location, '3F', '全角の＠や数字を含む場所名も読み取る');
+  assert.equal(insights.describeQuickInput(insights.parseQuickInput('明日15時 定例 @第2会議室', thursday)), '予定 · 11/20 15:00 · 定例 @ 第2会議室');
+  const source = { events: [{ id: 'a', title: '打ち合わせ', location: '本社', note: '資料を印刷' }] };
+  assert.equal(plain(insights.searchAll(source, '本社')).events.length, 1);
+  assert.equal(plain(insights.searchAll(source, '印刷')).events.length, 1);
 });

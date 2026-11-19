@@ -80,6 +80,10 @@ function parseQuickInput(input, now) {
   if (/(タスク|TODO|やること|までに|締め?切り?|〆切)/i.test(text)) kind = 'task';
   if (/予定/.test(text)) kind = kind || 'event';
   text = text.replace(/(タスク|TODO|やること|(?<=\S)の予定|予定:?)/gi, ' ').replace(/(締め?切り?|〆切)/g, ' ');
+  // 「@本社」「＠第2会議室」のように @ の後ろを場所として読み取る（数字を含む場所名を日時と誤認しないよう先に取り出す）。
+  let location = '';
+  const place = text.match(/[@＠]\s*([^\s@＠]+)/);
+  if (place) { location = place[1].slice(0, 200); text = quickCut(text, place.index, place[0].length); }
   let priority = 'medium';
   if (/(重要|至急|!{1,})/.test(text)) { priority = 'high'; text = text.replace(/(重要|至急|!+)/g, ' '); }
 
@@ -119,7 +123,7 @@ function parseQuickInput(input, now) {
   const startTime = time ? time.time : '';
   // 同じ日の予定で終わりが始まり以前なら、終了時刻は使わない。
   if (endTime && (!endDate || endDate === date) && endTime <= startTime) endTime = '';
-  return { kind, title: title.slice(0, 120), date, endDate: endDate || date, time: startTime, endTime, priority };
+  return { kind, title: title.slice(0, 120), date, endDate: endDate || date, time: startTime, endTime, priority, location };
 }
 
 // 解析結果を「予定 · 11/20 15:00 · 会議」のような短い説明にする。
@@ -129,7 +133,7 @@ function describeQuickInput(result) {
   const when = result.kind === 'event'
     ? [result.endDate !== result.date ? `${day(result.date)}〜${day(result.endDate)}` : day(result.date), result.time ? (result.endTime ? `${result.time}–${result.endTime}` : result.time) : '終日'].join(' ')
     : [result.date ? `期限 ${day(result.date)}` : '期限なし', result.time ? `通知 ${result.time}` : '', result.priority === 'high' ? '優先度 高' : ''].filter(Boolean).join(' ');
-  return `${result.kind === 'event' ? '予定' : 'タスク'} · ${when} · ${result.title}`;
+  return `${result.kind === 'event' ? '予定' : 'タスク'} · ${when} · ${result.title}${result.location ? ` @ ${result.location}` : ''}`;
 }
 
 // ---- 全体検索 ----
@@ -145,7 +149,7 @@ function searchAll(source, query, limit = 20) {
   const hit = text => { const target = searchNormalize(text); return words.every(word => target.includes(word)); };
   const result = {
     tasks: (source.tasks || []).filter(task => hit([task.title, task.note, ...(task.subtasks || []).map(sub => sub.title)].join(' '))).slice(0, limit),
-    events: (source.events || []).filter(event => hit(event.title)).slice(0, limit),
+    events: (source.events || []).filter(event => hit([event.title, event.location, event.note].join(' '))).slice(0, limit),
     notes: (source.notes || []).filter(note => hit(note.body)).slice(0, limit),
     bookmarks: (source.bookmarks || []).filter(mark => hit([mark.title, mark.url, ...(mark.tags || [])].join(' '))).slice(0, limit)
   };
