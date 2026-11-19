@@ -117,8 +117,7 @@
   window.toolbox = function () {
     const selected = toolItems.find(function (item) { return item[0] === activeTool; });
     return '<main class="page tools-page">' +
-      '<div class="page-head"><div><p class="kicker">05 / TOOLKIT</p><h1 class="title">便利ツール</h1>' +
-      '<p class="subtitle">日常の小さな作業を、ここで素早く。</p></div>' +
+      '<div class="page-head"><div><p class="kicker">05 / TOOLKIT</p><h1 class="title">便利ツール</h1></div>' +
       '<div class="privacy-badge">端末内で処理</div></div>' +
       '<nav class="tool-tabs" aria-label="便利ツール">' +
       toolItems.map(function (item) {
@@ -137,7 +136,7 @@
   }
 
   function bookmarksMarkup() {
-    return '<div class="tool-heading"><div><span class="tool-eyebrow">BOOKMARKS</span><h2>よく使う場所を、すぐ近くに。</h2></div>' +
+    return '<div class="tool-heading"><div><span class="tool-eyebrow">BOOKMARKS</span></div>' +
       '<span class="tool-count" id="bookmarkCount">' + filteredBookmarks().length + '件</span></div>' +
       '<form class="bookmark-form panel" id="bookmarkForm">' +
       '<div class="field"><label for="bookmarkTitle">名前</label><input class="input" id="bookmarkTitle" maxlength="80" placeholder="例：ニュース"></div>' +
@@ -180,7 +179,7 @@
 
   function calculatorMarkup() {
     const group = unitGroups[converterState.category];
-    return '<div class="tool-heading"><div><span class="tool-eyebrow">CALCULATOR</span><h2>計算と変換を、ひと続きに。</h2></div></div>' +
+    return '<div class="tool-heading"><div><span class="tool-eyebrow">CALCULATOR</span></div></div>' +
       '<div class="calculator-layout">' +
       '<section class="panel calculator-card"><h3>電卓</h3>' +
       '<form id="calculatorForm"><label class="sr-only" for="calcExpression">計算式</label>' +
@@ -583,7 +582,7 @@
   }
 
   function qrMarkup() {
-    return '<div class="tool-heading"><div><span class="tool-eyebrow">QR GENERATOR</span><h2>文字とリンクを、その場でQRに。</h2></div>' +
+    return '<div class="tool-heading"><div><span class="tool-eyebrow">QR GENERATOR</span></div>' +
       '<span class="local-note">入力内容は送信されません</span></div>' +
       '<div class="qr-layout"><section class="panel qr-controls">' +
       '<div class="field"><label for="qrText">QRにする内容</label><textarea id="qrText" rows="7" maxlength="4000" placeholder="URLやテキストを入力">' + esc(qrState.text) + '</textarea>' +
@@ -792,7 +791,7 @@
   }
 
   function diffMarkup() {
-    return '<div class="tool-heading"><div><span class="tool-eyebrow">DIFF CHECKER</span><h2>2つの文章から、違いだけを見る。</h2></div></div>' +
+    return '<div class="tool-heading"><div><span class="tool-eyebrow">DIFF CHECKER</span></div></div>' +
       '<div class="diff-inputs"><div class="field"><label for="diffBefore">変更前</label><textarea id="diffBefore" rows="12" spellcheck="false" placeholder="変更前の文章">' + esc(diffState.before) + '</textarea></div>' +
       '<div class="diff-swap"><button class="swap-button" id="swapDiff" type="button" aria-label="変更前と変更後を入れ替える">⇄</button></div>' +
       '<div class="field"><label for="diffAfter">変更後</label><textarea id="diffAfter" rows="12" spellcheck="false" placeholder="変更後の文章">' + esc(diffState.after) + '</textarea></div></div>' +

@@ -30,7 +30,7 @@ async function main() {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin);
-    assert.equal(await page.locator('h1').innerText(), '今日を、整える。');
+    assert.equal(await page.locator('h1').textContent(), 'ホーム');
     assert.equal(await page.locator('#installBanner').isVisible(), true);
     assert.ok((await page.locator('#installBanner').boundingBox()).y < (await page.locator('.header').boundingBox()).y, 'インストール案内がヘッダーより上に表示される');
     assert.equal(await page.locator('.install-icon').evaluate(image => image.naturalWidth), 192);
