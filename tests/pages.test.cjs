@@ -71,7 +71,7 @@ test('ダッシュボードに今日やること・今日の予定・集中時�
     sessions: [{ date: '2026-11-19', minutes: 25, task: '読書' }, { date: '2026-11-18', minutes: 50, task: '' }]
   } });
   const html = app.html();
-  assert.match(html, /aria-current="page">ホーム/);
+  assert.match(html, /aria-current="page">HOME</);
   assert.match(html, /data-page="stats"/, 'ナビゲーションに統計ページがある');
   const order = ['期限切れの書類', '今日の提出', '来月の準備'].map(title => html.indexOf(title));
   assert.deepEqual(order, [...order].sort((a, b) => a - b), '期限切れ・今日 → 優先度の順');
