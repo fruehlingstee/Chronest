@@ -336,3 +336,15 @@ test('legacy generated chains retain completed history and reopen only their act
   assert.equal(parent.done, true);
   assert.equal(harness.data().tasks.length, 2);
 });
+
+test('完了の履歴を残し、同じ日のチェックの付け外しでは回数が増えず、繰り返しタスクは毎回記録する', () => {
+  const harness = taskHarness({ tasks: [{ id: 'daily', title: '日課', repeat: 'daily', due: '2026-11-19' }] });
+  harness.toggle('daily', true);
+  harness.toggle('daily', false);
+  harness.toggle('daily', true);
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.data().completions)), [{ taskId: 'daily', title: '日課', date: '2026-11-19' }]);
+  harness.advance(24 * 60 * 60 * 1000);
+  assert.equal(harness.data().tasks[0].done, false, '翌日には未完了に戻る');
+  harness.toggle('daily', true);
+  assert.deepEqual(Array.from(harness.data().completions, entry => entry.date), ['2026-11-19', '2026-11-20'], '前日の記録は残したまま、今日の完了を追加する');
+});

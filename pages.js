@@ -194,7 +194,9 @@
   stats = function () {
     const now = new Date();
     const focus = focusSummary(data.sessions, now);
-    const tasksInfo = taskSummary(data.tasks, now);
+    const tasksInfo = taskSummary(data.tasks, now, data.completions || []);
+    const done = completionSummary(data.completions || [], now);
+    const maxDone = Math.max(3, ...done.days.map(day => day.count));
     const heatmap = focusHeatmap(data.sessions, now, 12);
     const maxDay = Math.max(30, ...focus.days.map(day => day.minutes));
     const byTask = [...focusMinutesByTask(data.sessions)].map(([id, minutes]) => ({ task: data.tasks.find(task => String(task.id) === id), minutes }))
@@ -217,6 +219,16 @@
         <div class="panel"><h3>タスク</h3>
           <div class="task-meter" role="img" aria-label="達成率 ${tasksInfo.rate}%"><span style="width:${tasksInfo.rate}%"></span></div>
           <dl class="stats-list"><div><dt>完了</dt><dd>${tasksInfo.done}</dd></div><div><dt>未完了</dt><dd>${tasksInfo.open}</dd></div><div><dt>期限切れ</dt><dd class="${tasksInfo.overdue ? 'red' : ''}">${tasksInfo.overdue}</dd></div><div><dt>今週完了</dt><dd>${tasksInfo.completedThisWeek}</dd></div></dl>
+        </div>
+      </section>
+      <section class="stats-grid">
+        <div class="panel"><h3>直近7日間の完了 <small>${done.week}件 · 連続${done.streak}日</small></h3>
+          <div class="focus-bars done-bars" role="img" aria-label="直近7日間に完了したタスク: ${done.days.map(day => `${shortDate(day.date)} ${day.count}件`).join('、')}">
+            ${done.days.map(day => `<div class="focus-bar"><span class="focus-bar-value">${day.count || ''}</span><span class="focus-bar-fill" style="height:${Math.round(day.count / maxDone * 100)}%"></span><small>${weekdayName(day.date)}</small></div>`).join('')}
+          </div>
+        </div>
+        <div class="panel"><h3>よく完了したタスク <small>直近30日</small></h3>
+          ${done.topTasks.map(item => `<div class="dash-row"><span class="dash-copy"><span class="dash-title">${esc(item.title)}</span><small class="meta">最後 ${esc(shortDate(item.last))}</small></span><b class="stats-minutes">${item.count}回</b></div>`).join('') || '<div class="empty">タスクを完了すると、ここに回数が表示されます</div>'}
         </div>
       </section>
       <section class="panel heatmap-panel"><h3>集中ヒートマップ <small>直近12週間 · ${activeDays}日 · 合計${focus.total}分</small></h3>

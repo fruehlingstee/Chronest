@@ -179,15 +179,49 @@ function focusSummary(sessions, now) {
   };
 }
 
-function taskSummary(tasks, now) {
+function taskSummary(tasks, now, completions = []) {
   const today = quickKey(now), weekStart = scheduleAddDays(today, -6);
   const list = tasks || [];
   const done = list.filter(task => task.done).length;
+  // 完了の履歴があればそれで数える（繰り返しタスクの完了も含められる）。無い旧データは今の完了状態で数える。
+  const completedThisWeek = completions.length
+    ? completions.filter(entry => entry.date >= weekStart && entry.date <= today).length
+    : list.filter(task => task.done && task.completedOn && task.completedOn >= weekStart && task.completedOn <= today).length;
   return {
     total: list.length, done, open: list.length - done,
     overdue: list.filter(task => !task.done && task.due && task.due < today).length,
     rate: list.length ? Math.round(done / list.length * 100) : 0,
-    completedThisWeek: list.filter(task => task.done && task.completedOn && task.completedOn >= weekStart && task.completedOn <= today).length
+    completedThisWeek
+  };
+}
+
+// 完了の履歴から、直近7日間の日ごとの完了数・連続日数・直近30日でよく完了したタスクを求める。
+function completionSummary(completions, now) {
+  const today = quickKey(now);
+  const counts = new Map();
+  for (const entry of completions || []) counts.set(entry.date, (counts.get(entry.date) || 0) + 1);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = scheduleAddDays(today, index - 6);
+    return { date, count: counts.get(date) || 0 };
+  });
+  let streak = 0;
+  let cursor = counts.get(today) ? today : scheduleAddDays(today, -1);
+  while (cursor && counts.get(cursor)) { streak++; cursor = scheduleAddDays(cursor, -1); }
+  const monthStart = scheduleAddDays(today, -29);
+  const byTask = new Map();
+  for (const entry of completions || []) {
+    if (entry.date < monthStart || entry.date > today) continue;
+    const key = entry.taskId !== '' ? 'id:' + entry.taskId : 'title:' + entry.title;
+    const item = byTask.get(key) || { taskId: entry.taskId, title: entry.title, count: 0, last: '' };
+    item.count++;
+    if (entry.date >= item.last) { item.last = entry.date; item.title = entry.title; }
+    byTask.set(key, item);
+  }
+  return {
+    today: counts.get(today) || 0,
+    week: days.reduce((sum, day) => sum + day.count, 0),
+    days, streak,
+    topTasks: [...byTask.values()].sort((a, b) => b.count - a.count || b.last.localeCompare(a.last)).slice(0, 5)
   };
 }
 

@@ -145,3 +145,18 @@ test('終了時刻のある予定は長さどおりに配置し、期間の予�
   assert.deepEqual(plain(insights.timelineLayout(events, [], '2026-11-20')).allDay.map(item => item.event.id), ['trip'], '途中の日は終日の段');
   assert.deepEqual(plain(insights.timelineLayout(events, [], '2026-11-21')).allDay.map(item => item.event.id), ['trip'], '終了時刻が無い最終日も終日の段');
 });
+
+test('完了の履歴から直近7日間の完了数・連続日数・よく完了したタスクを求める', () => {
+  const insights = load();
+  const completions = [
+    { taskId: 'walk', title: '散歩', date: '2026-11-17' }, { taskId: 'walk', title: '散歩', date: '2026-11-18' },
+    { taskId: 'walk', title: '朝の散歩', date: '2026-11-19' }, { taskId: 'report', title: 'レポート', date: '2026-11-19' },
+    { taskId: '', title: '旧タスク', date: '2026-11-01' }, { taskId: 'old', title: '先月', date: '2026-10-01' }
+  ];
+  const summary = plain(insights.completionSummary(completions, thursday));
+  assert.deepEqual([summary.today, summary.week, summary.streak], [2, 4, 3]);
+  assert.deepEqual(summary.days.at(-1), { date: '2026-11-19', count: 2 });
+  assert.deepEqual(summary.topTasks.map(item => [item.title, item.count, item.last]), [['朝の散歩', 3, '2026-11-19'], ['レポート', 1, '2026-11-19'], ['旧タスク', 1, '2026-11-01']], '名前を変えても同じタスクとして数え、30日より前は含めない');
+  const tasks = [{ done: false, completedOn: '' }];
+  assert.equal(plain(insights.taskSummary(tasks, thursday, completions)).completedThisWeek, 4, '繰り返しで未完了に戻ったタスクの完了も数える');
+});

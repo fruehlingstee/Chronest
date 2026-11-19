@@ -120,6 +120,10 @@ function normalizeData(input, options = {}) {
     }),
     notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created), ...(typeof item.updated === 'string' && Number.isFinite(Date.parse(item.updated)) ? { updated: item.updated } : {}) })),
     sessions: collection('sessions', false, item => isDateKey(item.date) && typeof item.minutes === 'number' && Number.isFinite(item.minutes) && item.minutes > 0 && (!strict || optionalString(item, 'task')), item => ({ date: item.date, minutes: item.minutes, task: text(item.task), taskId: (typeof item.taskId === 'number' && Number.isFinite(item.taskId)) || (typeof item.taskId === 'string' && /^[\w.-]+$/.test(item.taskId)) ? item.taskId : '' })),
+    completions: collection('completions', false, item => isDateKey(item.date) && (!strict || optionalString(item, 'title')), item => ({
+      taskId: (typeof item.taskId === 'number' && Number.isFinite(item.taskId)) || (typeof item.taskId === 'string' && /^[\w.-]+$/.test(item.taskId)) ? item.taskId : '',
+      title: text(item.title), date: item.date
+    })).slice(-5000),
     bookmarks: collection('bookmarks', false, item => typeof item.url === 'string' && Boolean(bookmarkUrl(item.url)) && (!strict || (optionalString(item, 'title') && (item.tags === undefined || (Array.isArray(item.tags) && item.tags.every(tag => typeof tag === 'string'))))), item => ({ id: id(item.id), title: text(item.title), url: bookmarkUrl(item.url), tags: (Array.isArray(item.tags) ? item.tags : []).filter(tag => typeof tag === 'string'), created: created(item.created) })),
     calculatorHistory: collection('calculatorHistory', false, item => typeof item.expression === 'string' && typeof item.result === 'string', item => ({ expression: item.expression, result: item.result })).slice(0, 10)
   };

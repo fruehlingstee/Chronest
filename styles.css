@@ -196,3 +196,6 @@ input::-webkit-calendar-picker-indicator{opacity:1;cursor:pointer;min-width:20px
 .toast{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 10px 10px 16px;border:1px solid var(--control-border);border-radius:8px;background:var(--panel2);color:var(--text);box-shadow:0 10px 30px rgba(0,0,0,.45);pointer-events:auto;font-size:14px}
 .toast span{min-width:0;overflow-wrap:anywhere}.toast .button{flex-shrink:0;min-height:40px}
 .notes-filter{margin:14px 0}.notes-filter .input{width:100%}
+/* 完了履歴 */
+.done-bars .focus-bar-fill{background:var(--blue)}
+.stats-grid h3 small{color:var(--muted);font-weight:400;font-size:12px}

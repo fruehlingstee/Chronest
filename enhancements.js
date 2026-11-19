@@ -101,8 +101,17 @@
   function setTaskCompleted(task, done) {
     if (!task || task.done === Boolean(done)) return;
     retireRepeatAncestors();
+    const previousCompletedOn = task.completedOn;
     task.done = Boolean(done);
     task.completedOn = task.done ? todayKey() : '';
+    // 完了の履歴を残す。繰り返しタスクは翌日に未完了へ戻るため、こなした回数はこの記録で数える。
+    // チェックを外したときは、その完了の記録も消す（付け外しで回数が増えないように）。
+    if (!Array.isArray(data.completions)) data.completions = [];
+    if (task.done) data.completions.push({ taskId: task.id, title: task.title, date: task.completedOn });
+    else {
+      const index = data.completions.map(entry => String(entry.taskId) === String(task.id) && entry.date === previousCompletedOn).lastIndexOf(true);
+      if (index >= 0) data.completions.splice(index, 1);
+    }
     if (task.repeat === 'monthly') task.repeatAnchorDay = repeatAnchorDay(task);
     task.nextOccurrenceOn = task.done && !task.repeatRetired ? nextDate(task) : '';
   }

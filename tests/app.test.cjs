@@ -362,3 +362,14 @@ test('event end times survive reload, and invalid end times are rejected as a ba
     assert.ok([...recovered.storage.keys()].some(key => key.startsWith('dayflow-v2-recovery-')), JSON.stringify(fields));
   }
 });
+
+test('completion history survives reload and malformed entries are dropped', () => {
+  const app = createApp({ stored: JSON.stringify({ tasks: [], notes: [], events: [], completions: [
+    { taskId: 'walk', title: '散歩', date: '2026-11-18' }, { taskId: '<bad>', title: '不正なID', date: '2026-11-18' }
+  ] }) });
+  assert.equal(app.run('data.completions.length'), 2);
+  assert.equal(app.run('data.completions[1].taskId'), '', '不正なIDは空として残す');
+  const recovered = createApp({ stored: JSON.stringify({ tasks: [], notes: [], events: [], completions: [{ taskId: 'x', title: '日付なし' }, { taskId: 'y', title: '正しい', date: '2026-11-18' }] }) });
+  assert.equal(recovered.run('data.completions.length'), 1);
+  assert.equal(recovered.run('data.completions[0].title'), '正しい');
+});
