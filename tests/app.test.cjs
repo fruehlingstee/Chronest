@@ -345,3 +345,20 @@ test('reset restores the selected focus duration and cancels the active timer', 
   assert.equal(app.timers.size, 0);
   assert.equal(app.run('data.sessions.length'), 0);
 });
+
+test('event end times survive reload, and invalid end times are rejected as a backup and recovered without them', () => {
+  const app = createApp({ stored: JSON.stringify({ tasks: [], notes: [], events: [
+    { id: 'meeting', title: '会議', date: '2026-11-20', time: '10:00', endTime: '11:30' },
+    { id: 'night', title: '夜行', date: '2026-11-20', endDate: '2026-11-21', time: '22:00', endTime: '07:00' }
+  ] }), now: '2026-11-20T08:00:00' });
+  assert.equal(app.run('data.events[0].endTime'), '11:30');
+  assert.equal(app.run('data.events[1].endTime'), '07:00');
+  assert.match(app.run('home()'), /10:00–11:30/);
+  for (const fields of [{ time: '10:00', endTime: '09:00' }, { time: '', endTime: '09:00' }, { time: '10:00', endTime: '25:00' }]) {
+    const original = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'bad', title: '不正な終了時刻', date: '2026-11-20', ...fields }] });
+    const recovered = createApp({ stored: original });
+    assert.equal(recovered.run('data.events[0].endTime'), '', JSON.stringify(fields));
+    recovered.run('save()');
+    assert.ok([...recovered.storage.keys()].some(key => key.startsWith('dayflow-v2-recovery-')), JSON.stringify(fields));
+  }
+});

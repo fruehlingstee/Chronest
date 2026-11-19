@@ -14,9 +14,10 @@ function eventOccursOn(event, key) {
 
 function eventTimeLabel(event, key) {
   const occurrence = eventOccurrenceOn(event, key);
-  if (!occurrence || occurrence.start === occurrence.end) return event.time || '終日';
+  if (!occurrence || occurrence.start === occurrence.end) return eventTimeRange(event);
   if (key === occurrence.start) return event.time ? `開始 ${event.time}` : '開始日';
-  return key === occurrence.end ? '最終日' : '期間中';
+  if (key === occurrence.end) return event.endTime ? `〜${event.endTime}` : '最終日';
+  return '期間中';
 }
 
 function normalizeData(input, options = {}) {
@@ -98,6 +99,7 @@ function normalizeData(input, options = {}) {
     events: collection('events', true, item => titleValid(item) && isDateKey(item.date) && (!strict || (
       (item.endDate === undefined || item.endDate === '' || (isDateKey(item.endDate) && item.endDate >= item.date)) &&
       (item.time === undefined || item.time === '' || Boolean(time(item.time))) &&
+      (item.endTime === undefined || item.endTime === '' || (Boolean(time(item.endTime)) && !eventEndTimeError({ ...item, time: time(item.time), endDate: isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date }))) &&
       eventRepeatValid(item) && reminderValid(item) &&
       (item.color === undefined || item.color === '' || Boolean(eventColorChoice(item.color)))
     )), item => {
@@ -106,7 +108,10 @@ function normalizeData(input, options = {}) {
       // 次の回と重なるほど長い繰り返しは、復旧時は繰り返しを外して1回分の予定として残す。
       if (eventRepeatSpanError(repeat, scheduleDayDiff(item.date, endDate))) repeat = 'none';
       return {
-        id: id(item.id), title: item.title, date: item.date, endDate, time: time(item.time), repeat,
+        id: id(item.id), title: item.title, date: item.date, endDate, time: time(item.time),
+        // 開始時刻が無い・開始より前の終了時刻は、復旧時は外す。
+        endTime: time(item.endTime) && !eventEndTimeError({ date: item.date, endDate, time: time(item.time), endTime: time(item.endTime) }) ? time(item.endTime) : '',
+        repeat,
         repeatUntil: repeat !== 'none' && isDateKey(item.repeatUntil) && item.repeatUntil >= item.date ? item.repeatUntil : '',
         exceptions: repeat !== 'none' && Array.isArray(item.exceptions) ? [...new Set(item.exceptions.filter(isDateKey))].sort() : [],
         reminder: eventReminderMinutes(item), remindedStart: date(item.remindedStart),

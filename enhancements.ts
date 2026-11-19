@@ -358,7 +358,7 @@
   let selectedDay = todayKey();
   // 作成フォームの「繰り返し」などの初期値。予定を追加した後はここへ戻す。
   const emptyEventOptions = () => ({ repeat: 'none', repeatUntil: '', reminder: '', color: '' });
-  let eventDraft = { date: selectedDay, endDate: selectedDay, time: '', title: '', ...emptyEventOptions() };
+  let eventDraft = { date: selectedDay, endDate: selectedDay, time: '', endTime: '', title: '', ...emptyEventOptions() };
   let eventDraftStart = selectedDay;
   let eventOptionsOpen = false;
   let calendarNotice = '';
@@ -405,6 +405,7 @@
       date: document.querySelector('#eventDate').value,
       endDate: document.querySelector('#eventEndDate').value,
       time: document.querySelector('#eventTime').value,
+      endTime: document.querySelector('#eventEndTime').value,
       title: document.querySelector('#eventTitle').value,
       repeat: document.querySelector('#eventRepeat').value || 'none',
       repeatUntil: document.querySelector('#eventRepeatUntil').value,
@@ -430,11 +431,13 @@
 
   // 作成フォームと編集画面で共通の入力チェック。問題があれば欄にメッセージを付けて false を返す。
   function validateEventForm(form, fields) {
-    const { title, date, endDate, time, repeat, repeatUntil } = fields;
+    const { title, date, endDate, time, endTime, repeat, repeatUntil } = fields;
     const repeatValue = repeat.value || 'none';
     title.setCustomValidity(title.value.trim() ? '' : '予定のタイトルを入力してください。');
     date.setCustomValidity(parseCalendarDate(date.value) ? '' : '正しい日付を入力してください。');
     time.setCustomValidity(!time.value || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time.value) ? '' : '正しい時刻を入力してください。');
+    endTime.setCustomValidity(endTime.value && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(endTime.value) ? '正しい時刻を入力してください。' :
+      parseCalendarDate(date.value) ? eventEndTimeError({ date: date.value, endDate: endDate.value || date.value, time: time.value, endTime: endTime.value }) : '');
     let endMessage = !endDate.value ? '' : !parseCalendarDate(endDate.value) ? '正しい終了日を入力してください。' : endDate.value < date.value ? '終了日は開始日以降にしてください。' : '';
     // 繰り返す予定は、次の回と重ならない長さに限る（例: 毎週なら7日以内）。
     if (!endMessage && parseCalendarDate(date.value)) endMessage = eventRepeatSpanError(repeatValue, scheduleDayDiff(date.value, endDate.value || date.value));
@@ -449,6 +452,7 @@
     const date = fields.date.value, repeat = fields.repeat.value || 'none';
     return {
       title: fields.title.value.trim(), date, endDate: fields.endDate.value || date, time: fields.time.value,
+      endTime: fields.time.value ? fields.endTime.value : '',
       repeat, repeatUntil: repeat === 'none' ? '' : fields.repeatUntil.value,
       reminder: fields.reminder.value === '' ? null : Number(fields.reminder.value),
       color: eventColorChoice(fields.color.value)
@@ -492,6 +496,7 @@
           <div><label for="editEventDate">開始日</label><input class="input" id="editEventDate" type="date" min="0001-01-01" max="9999-12-31" required value="${esc(item.date)}"></div>
           <div><label for="editEventEndDate">終了日（空欄は同日）</label><input class="input" id="editEventEndDate" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(eventEndKey(item))}"></div>
           <div><label for="editEventTime">開始時刻（空欄は終日）</label><input class="input" id="editEventTime" type="time" value="${esc(item.time || '')}"></div>
+          <div><label for="editEventEndTime">終了時刻（空欄は未定）</label><input class="input" id="editEventEndTime" type="time" value="${esc(item.endTime || '')}"></div>
           <div><label for="editEventRepeat">繰り返し</label><select class="select" id="editEventRepeat">${selectOptions(EVENT_REPEAT_OPTIONS, eventRepeat(item))}</select></div>
           <div><label for="editEventRepeatUntil">繰り返しの終了日（空欄は無期限）</label><input class="input" id="editEventRepeatUntil" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(item.repeatUntil || '')}" ${repeating ? '' : 'disabled'}></div>
           <div><label for="editEventReminder">通知</label><select class="select" id="editEventReminder">${selectOptions(EVENT_REMINDER_OPTIONS, eventReminderMinutes(item) ?? '')}</select></div>
@@ -504,12 +509,12 @@
     const form = document.querySelector('#editEventForm');
     const fields = {
       title: document.querySelector('#editEventTitle'), date: document.querySelector('#editEventDate'),
-      endDate: document.querySelector('#editEventEndDate'), time: document.querySelector('#editEventTime'),
+      endDate: document.querySelector('#editEventEndDate'), time: document.querySelector('#editEventTime'), endTime: document.querySelector('#editEventEndTime'),
       repeat: document.querySelector('#editEventRepeat'), repeatUntil: document.querySelector('#editEventRepeatUntil'),
       reminder: document.querySelector('#editEventReminder'), color: document.querySelector('#editEventColor')
     };
     let previousStart = item.date;
-    [fields.title, fields.endDate, fields.time, fields.repeatUntil].forEach(input => input.oninput = () => input.setCustomValidity(''));
+    [fields.title, fields.endDate, fields.time, fields.endTime, fields.repeatUntil].forEach(input => input.oninput = () => input.setCustomValidity(''));
     fields.repeat.onchange = () => {
       fields.endDate.setCustomValidity('');
       fields.repeatUntil.disabled = fields.repeat.value === 'none';
@@ -583,10 +588,16 @@
     const selectedEvents = occurrencesOn(selectedDay);
     const selectedTasks = dueTasks.filter(task => task.due === selectedDay);
     const phaseLabel = { single: '', start: '開始', middle: '期間中', end: '終了' };
-    const timeLabel = ({ event, occurrence }, key) => ['single', 'start'].includes(occurrencePhase(occurrence, key)) ? event.time || '終日' : phaseLabel[occurrencePhase(occurrence, key)];
+    // 1日だけの回は「10:00–11:30」、期間の初日は開始時刻、最終日は終了時刻（あれば）を出す。
+    const timeLabel = ({ event, occurrence }, key) => {
+      const phase = occurrencePhase(occurrence, key);
+      if (phase === 'single') return eventTimeRange(event);
+      if (phase === 'start') return event.time || '終日';
+      return phase === 'end' && event.endTime ? `〜${event.endTime}` : phaseLabel[phase];
+    };
     const details = ({ event, occurrence }, extra = '') => {
       const parts = [];
-      if (occurrence.start !== occurrence.end) parts.push(`${rangeLabel(occurrence)} · ${event.time ? `開始 ${event.time}` : '終日'}`);
+      if (occurrence.start !== occurrence.end) parts.push(`${rangeLabel(occurrence)} · ${event.time ? `開始 ${event.time}${event.endTime ? ` · 終了 ${event.endTime}` : ''}` : '終日'}`);
       if (eventRepeat(event) !== 'none') parts.push(`↻ ${eventRepeatLabel(event)}`);
       if (eventReminderMinutes(event) !== null) parts.push(`通知 ${eventReminderLabel(event)}`);
       if (extra) parts.push(extra);
@@ -640,6 +651,7 @@
         <div class="field"><label for="eventDate">開始日</label><input class="select" id="eventDate" type="date" min="0001-01-01" max="9999-12-31" value="${esc(eventDraft.date)}" required></div>
         <div class="field"><label for="eventEndDate">終了日（空欄は同日）</label><input class="select" id="eventEndDate" type="date" min="${esc(eventDraft.date)}" max="9999-12-31" value="${esc(eventDraft.endDate)}"></div>
         <div class="field"><label for="eventTime">開始時刻（空欄は終日）</label><input class="select" id="eventTime" type="time" value="${esc(eventDraft.time)}"></div>
+        <div class="field"><label for="eventEndTime">終了時刻（空欄は未定）</label><input class="select" id="eventEndTime" type="time" value="${esc(eventDraft.endTime)}"></div>
         <div class="field calendar-title-field"><label for="eventTitle">タイトル</label><input class="input" id="eventTitle" maxlength="120" required placeholder="新しい予定" value="${esc(eventDraft.title)}"></div>
         <button class="button" type="submit">予定を追加</button>
         <details class="calendar-options" id="eventOptions" ${eventOptionsOpen || optionSummary ? 'open' : ''}>
@@ -815,11 +827,11 @@
       const form = document.querySelector('#eventForm');
       const fields = {
         title: document.querySelector('#eventTitle'), date: document.querySelector('#eventDate'),
-        endDate: document.querySelector('#eventEndDate'), time: document.querySelector('#eventTime'),
+        endDate: document.querySelector('#eventEndDate'), time: document.querySelector('#eventTime'), endTime: document.querySelector('#eventEndTime'),
         repeat: document.querySelector('#eventRepeat'), repeatUntil: document.querySelector('#eventRepeatUntil'),
         reminder: document.querySelector('#eventReminder'), color: document.querySelector('#eventColor')
       };
-      [fields.title, fields.endDate, fields.time, fields.repeatUntil].forEach(input => input.oninput = () => {
+      [fields.title, fields.endDate, fields.time, fields.endTime, fields.repeatUntil].forEach(input => input.oninput = () => {
         input.setCustomValidity('');
         rememberEventDraft();
       });
@@ -855,7 +867,7 @@
           id: globalThis.crypto?.randomUUID?.() || `event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           ...next, exceptions: [], remindedStart: ''
         });
-        eventDraft = { date: next.date, endDate: next.date, time: '', title: '', ...emptyEventOptions() };
+        eventDraft = { date: next.date, endDate: next.date, time: '', endTime: '', title: '', ...emptyEventOptions() };
         calendarNotice = '';
         if (next.reminder !== null) ensureNotificationPermission();
         save();

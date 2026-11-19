@@ -99,14 +99,27 @@ function parseQuickInput(input, now) {
     } else text = quickCut(text, first.index, first.length);
   }
   const time = quickFindTime(text);
-  if (time) text = quickCut(text, time.index, time.length);
+  let endTime = '';
+  if (time) {
+    // 「15時〜16時半」「10:00-11:30」のような時間帯なら、終わりの時刻も読み取る。
+    const after = text.slice(time.index + time.length);
+    const separator = after.match(/^\s*(〜|~|から|-|ー|－)\s*/);
+    const second = separator ? quickFindTime(after.slice(separator[0].length)) : null;
+    if (second && second.index === 0) {
+      endTime = second.time;
+      text = text.slice(0, time.index) + ' ' + after.slice(separator[0].length + second.length);
+    } else text = quickCut(text, time.index, time.length);
+  }
 
   if (!kind) kind = time || endDate ? 'event' : 'task';
   if (kind === 'event' && !date) date = quickKey(now);
   const title = text.replace(/(までに|まで)/g, ' ').replace(/\s+/g, ' ').trim()
     .replace(/^(に|は|の|で|、|,)\s*/, '').replace(/\s*(に|は|の|で|、|,)$/, '').trim();
   if (!title) return { error: 'タイトルを入力してください。' };
-  return { kind, title: title.slice(0, 120), date, endDate: endDate || date, time: time ? time.time : '', priority };
+  const startTime = time ? time.time : '';
+  // 同じ日の予定で終わりが始まり以前なら、終了時刻は使わない。
+  if (endTime && (!endDate || endDate === date) && endTime <= startTime) endTime = '';
+  return { kind, title: title.slice(0, 120), date, endDate: endDate || date, time: startTime, endTime, priority };
 }
 
 // 解析結果を「予定 · 11/20 15:00 · 会議」のような短い説明にする。
@@ -114,7 +127,7 @@ function describeQuickInput(result) {
   if (result.error) return result.error;
   const day = key => key ? `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}` : '';
   const when = result.kind === 'event'
-    ? [result.endDate !== result.date ? `${day(result.date)}〜${day(result.endDate)}` : day(result.date), result.time || '終日'].join(' ')
+    ? [result.endDate !== result.date ? `${day(result.date)}〜${day(result.endDate)}` : day(result.date), result.time ? (result.endTime ? `${result.time}–${result.endTime}` : result.time) : '終日'].join(' ')
     : [result.date ? `期限 ${day(result.date)}` : '期限なし', result.time ? `通知 ${result.time}` : '', result.priority === 'high' ? '優先度 高' : ''].filter(Boolean).join(' ');
   return `${result.kind === 'event' ? '予定' : 'タスク'} · ${when} · ${result.title}`;
 }
@@ -211,16 +224,21 @@ function timelineDays(view, selected) {
   return Array.from({ length: 7 }, (_, offset) => scheduleAddDays(sunday, offset)).filter(Boolean);
 }
 
-// 1日分の並べ方。時刻のある回（初日）は時間軸に置き、終日・期間の途中・タスクの期限は上の段に並べる。
-// 終了時刻が無いため、時刻つきの予定は1時間の枠として描き、重なるものは横に並べる。
+// 1日分の並べ方。時刻のある回は時間軸に置き、終日・期間の途中・タスクの期限は上の段に並べる。
+// 終了時刻の無い予定は1時間の枠で描く。期間の予定は初日を開始〜24時、最終日を0時〜終了時刻で描く。重なる予定は横に並べる。
 function timelineLayout(events, tasks, key) {
   const allDay = [], timed = [];
   for (const event of events || []) {
     const occurrence = eventOccurrenceOn(event, key);
     if (!occurrence) continue;
     const phase = occurrencePhase(occurrence, key);
-    if (event.time && (phase === 'single' || phase === 'start')) {
-      timed.push({ event, occurrence, phase, start: Number(event.time.slice(0, 2)) * 60 + Number(event.time.slice(3, 5)) });
+    const startMinutes = event.time ? scheduleMinutes(event.time) : 0;
+    if (event.time && phase === 'single') {
+      timed.push({ event, occurrence, phase, start: startMinutes, end: event.endTime ? scheduleMinutes(event.endTime) : Math.min(startMinutes + 60, 24 * 60) });
+    } else if (event.time && phase === 'start') {
+      timed.push({ event, occurrence, phase, start: startMinutes, end: 24 * 60 });
+    } else if (event.endTime && phase === 'end') {
+      timed.push({ event, occurrence, phase, start: 0, end: scheduleMinutes(event.endTime) });
     } else allDay.push({ event, occurrence, phase });
   }
   timed.sort((a, b) => a.start - b.start || a.event.title.localeCompare(b.event.title, 'ja'));
@@ -228,11 +246,12 @@ function timelineLayout(events, tasks, key) {
   for (const item of timed) {
     let lane = laneEnds.findIndex(end => end <= item.start);
     if (lane < 0) { lane = laneEnds.length; laneEnds.push(0); }
-    laneEnds[lane] = item.start + 60;
+    laneEnds[lane] = Math.max(item.end, item.start + 15);
     item.lane = lane;
   }
   // 重なっている塊ごとに列数をそろえる（重ならない予定は全幅で表示する）。
-  for (const item of timed) item.lanes = Math.max(...timed.filter(other => other.start < item.start + 60 && item.start < other.start + 60).map(other => other.lane)) + 1;
+  const overlaps = (a, b) => a.start < Math.max(b.end, b.start + 15) && b.start < Math.max(a.end, a.start + 15);
+  for (const item of timed) item.lanes = Math.max(...timed.filter(other => overlaps(item, other)).map(other => other.lane)) + 1;
   allDay.sort((a, b) => a.occurrence.start.localeCompare(b.occurrence.start) || a.event.title.localeCompare(b.event.title, 'ja'));
   const due = (tasks || []).filter(task => !task.done && task.due === key);
   return { allDay, timed, tasks: due };

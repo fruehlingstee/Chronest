@@ -98,7 +98,7 @@
     const result = parseQuickInput(text, new Date());
     if (result.error) { quickNotice = result.error; return false; }
     if (result.kind === 'event') {
-      data.events.push({ id: newId('event'), title: result.title, date: result.date, endDate: result.endDate, time: result.time, repeat: 'none', repeatUntil: '', exceptions: [], reminder: null, remindedStart: '', color: '' });
+      data.events.push({ id: newId('event'), title: result.title, date: result.date, endDate: result.endDate, time: result.time, endTime: result.endTime, repeat: 'none', repeatUntil: '', exceptions: [], reminder: null, remindedStart: '', color: '' });
       quickNotice = `予定「${result.title}」を${shortDate(result.date)}${result.endDate !== result.date ? '〜' + shortDate(result.endDate) : ''}に追加しました。`;
     } else {
       data.tasks.unshift({
@@ -170,7 +170,7 @@
         <div class="timeline-grid">
           <div class="timeline-hours" aria-hidden="true">${Array.from({ length: 24 }, (_, hour) => `<span style="top:${hour * HOUR_HEIGHT}px">${hour}:00</span>`).join('')}</div>
           ${layouts.map(day => `<div class="timeline-column ${day.key === today ? 'is-today' : ''}" aria-label="${day.key}の時刻つき予定">
-            ${day.timed.map(item => `<button type="button" class="timeline-event event-color-${eventColor(item.event, item.occurrence)}" data-event-edit="${esc(item.event.id)}" data-event-date="${esc(item.occurrence.start)}" style="top:${item.start / 60 * HOUR_HEIGHT}px;left:calc(${item.lane} * 100% / ${item.lanes});width:calc(100% / ${item.lanes})" title="${esc(item.event.time)} ${esc(item.event.title)}"><time>${esc(item.event.time)}</time> ${esc(item.event.title)}</button>`).join('')}
+            ${day.timed.map(item => `<button type="button" class="timeline-event event-color-${eventColor(item.event, item.occurrence)}" data-event-edit="${esc(item.event.id)}" data-event-date="${esc(item.occurrence.start)}" style="top:${item.start / 60 * HOUR_HEIGHT}px;height:${Math.max(item.end - item.start, 20) / 60 * HOUR_HEIGHT - 3}px;left:calc(${item.lane} * 100% / ${item.lanes});width:calc(100% / ${item.lanes})" title="${esc(eventTimeRange(item.event))} ${esc(item.event.title)}"><time>${esc(item.phase === 'end' ? `〜${item.event.endTime}` : eventTimeRange(item.event))}</time> ${esc(item.event.title)}</button>`).join('')}
             ${day.key === today ? `<span class="timeline-now" style="top:${nowMinutes / 60 * HOUR_HEIGHT}px" aria-hidden="true"></span>` : ''}
           </div>`).join('')}
         </div>

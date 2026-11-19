@@ -17,8 +17,8 @@ const thursday = new Date(2026, 10, 19, 12, 0); // 2026-11-19（木）
 test('時刻つきの文は予定、日付だけや「までに」はタスクとして解析する', () => {
   const insights = load();
   const parse = text => plain(insights.parseQuickInput(text, thursday));
-  assert.deepEqual(parse('明日15時 会議'), { kind: 'event', title: '会議', date: '2026-11-20', endDate: '2026-11-20', time: '15:00', priority: 'medium' });
-  assert.deepEqual(parse('金曜までにレポート'), { kind: 'task', title: 'レポート', date: '2026-11-20', endDate: '2026-11-20', time: '', priority: 'medium' });
+  assert.deepEqual(parse('明日15時 会議'), { kind: 'event', title: '会議', date: '2026-11-20', endDate: '2026-11-20', time: '15:00', endTime: '', priority: 'medium' });
+  assert.deepEqual(parse('金曜までにレポート'), { kind: 'task', title: 'レポート', date: '2026-11-20', endDate: '2026-11-20', time: '', endTime: '', priority: 'medium' });
   assert.equal(parse('10:30 歯医者').date, '2026-11-19', '日付が無い予定は今日');
   assert.equal(parse('午後3時半 打ち合わせ').time, '15:30');
   assert.equal(parse('牛乳を買う').kind, 'task');
@@ -117,4 +117,31 @@ test('タイムラインの表示日と、時刻つき予定の配置・重な�
   assert.deepEqual(layout.timed.map(item => [item.event.id, item.start, item.lane, item.lanes]), [['a', 540, 0, 2], ['b', 570, 1, 2], ['c', 720, 0, 1], ['f', 1080, 0, 1]]);
   assert.deepEqual(layout.allDay.map(item => [item.event.id, item.phase]), [['d', 'middle'], ['e', 'single']]);
   assert.deepEqual(layout.tasks.map(task => task.id), ['t']);
+});
+
+test('「15時〜16時半」「10:00-11:30」のような時間帯から終了時刻も読み取る', () => {
+  const insights = load();
+  const parse = text => plain(insights.parseQuickInput(text, thursday));
+  const meeting = parse('明日15時〜16時半 会議');
+  assert.deepEqual([meeting.time, meeting.endTime, meeting.title], ['15:00', '16:30', '会議']);
+  assert.deepEqual([parse('10:00-11:30 定例').time, parse('10:00-11:30 定例').endTime], ['10:00', '11:30']);
+  assert.equal(parse('16時〜15時 逆転').endTime, '', '同じ日で終わりが始まり以前なら使わない');
+  assert.equal(insights.describeQuickInput(insights.parseQuickInput('明日15時〜16時半 会議', thursday)), '予定 · 11/20 15:00–16:30 · 会議');
+});
+
+test('終了時刻のある予定は長さどおりに配置し、期間の予定は初日と最終日を時間軸に描く', () => {
+  const insights = load();
+  const events = [
+    { id: 'long', title: '研修', date: '2026-11-19', endDate: '2026-11-19', time: '09:00', endTime: '12:00' },
+    { id: 'short', title: '電話', date: '2026-11-19', endDate: '2026-11-19', time: '11:00', endTime: '11:15' },
+    { id: 'after', title: '昼食', date: '2026-11-19', endDate: '2026-11-19', time: '12:00', endTime: '13:00' },
+    { id: 'night', title: '夜行', date: '2026-11-18', endDate: '2026-11-19', time: '22:00', endTime: '07:30' },
+    { id: 'trip', title: '旅行', date: '2026-11-19', endDate: '2026-11-21', time: '18:00', endTime: '' }
+  ];
+  const layout = plain(insights.timelineLayout(events, [], '2026-11-19'));
+  assert.deepEqual(layout.timed.map(item => [item.event.id, item.start, item.end, item.lane, item.lanes]), [
+    ['night', 0, 450, 0, 1], ['long', 540, 720, 0, 2], ['short', 660, 675, 1, 2], ['after', 720, 780, 0, 1], ['trip', 1080, 1440, 0, 1]
+  ]);
+  assert.deepEqual(plain(insights.timelineLayout(events, [], '2026-11-20')).allDay.map(item => item.event.id), ['trip'], '途中の日は終日の段');
+  assert.deepEqual(plain(insights.timelineLayout(events, [], '2026-11-21')).allDay.map(item => item.event.id), ['trip'], '終了時刻が無い最終日も終日の段');
 });

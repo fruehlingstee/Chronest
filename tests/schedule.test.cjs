@@ -129,3 +129,14 @@ test('次の回と重なる長さの繰り返しを検出する', () => {
   assert.equal(schedule.eventRepeatSpanError('monthly', 28), '毎月繰り返す予定は28日以内にしてください。');
   assert.equal(schedule.eventRepeatSpanError('yearly', 365), '毎年繰り返す予定は365日以内にしてください。');
 });
+
+test('終了時刻の表記と、開始時刻との前後関係を確かめる', () => {
+  const schedule = loadSchedule();
+  assert.equal(schedule.eventTimeRange({ time: '10:00', endTime: '11:30' }), '10:00–11:30');
+  assert.equal(schedule.eventTimeRange({ time: '10:00', endTime: '' }), '10:00');
+  assert.equal(schedule.eventTimeRange({ time: '' }), '終日');
+  assert.equal(schedule.eventEndTimeError({ date: '2026-11-20', endDate: '2026-11-20', time: '10:00', endTime: '11:00' }), '');
+  assert.equal(schedule.eventEndTimeError({ date: '2026-11-20', endDate: '2026-11-20', time: '10:00', endTime: '10:00' }), '終了時刻は開始時刻より後にしてください。');
+  assert.equal(schedule.eventEndTimeError({ date: '2026-11-20', endDate: '2026-11-21', time: '22:00', endTime: '07:00' }), '', '翌日以降に終わる予定は朝の時刻でもよい');
+  assert.equal(schedule.eventEndTimeError({ date: '2026-11-20', endDate: '2026-11-20', time: '', endTime: '11:00' }), '終了時刻は開始時刻と一緒に入力してください。');
+});

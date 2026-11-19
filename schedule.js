@@ -109,6 +109,26 @@ function eventRepeatLabel(event) {
   return event.repeatUntil ? `${label}（${event.repeatUntil}まで）` : label;
 }
 
+// ---- 予定の時刻 ----
+// 'HH:MM' を0時からの分に直す。
+function scheduleMinutes(time) {
+  return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+}
+
+// 終了時刻のチェック。開始時刻が無い・同じ日なのに開始より前の終了時刻はエラー（問題なければ ''）。
+function eventEndTimeError(event) {
+  if (!event.endTime) return '';
+  if (!event.time) return '終了時刻は開始時刻と一緒に入力してください。';
+  if (eventEndKey(event) === event.date && event.endTime <= event.time) return '終了時刻は開始時刻より後にしてください。';
+  return '';
+}
+
+// 「10:00–11:30」「10:00」「終日」のような時間帯の表記。
+function eventTimeRange(event) {
+  if (!event.time) return '終日';
+  return event.endTime ? `${event.time}–${event.endTime}` : event.time;
+}
+
 // ---- 予定の通知 ----
 // 値は「開始の何分前か」。終日の予定は時刻が無いので、当日9:00を開始とみなして計算する。
 const EVENT_REMINDER_OPTIONS = [['', '通知なし'], ['0', '開始時刻'], ['5', '5分前'], ['10', '10分前'], ['15', '15分前'], ['30', '30分前'], ['60', '1時間前'], ['1440', '1日前']];

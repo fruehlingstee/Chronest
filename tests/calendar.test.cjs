@@ -645,3 +645,43 @@ test('タイムライン上の予定を押すと、その回の編集画面を�
   assert.ok(nodes.get('#deleteEventOccurrence'), '繰り返しの回として開く');
   assert.equal(nodes.get('#editEventTitle').value, '授業');
 });
+
+test('終了時刻つきの予定を作成・編集でき、開始より前や開始時刻なしの終了時刻は保存しない', () => {
+  const { context, nodes, submit } = calendarHarness({ date: '2026-11-19T12:00:00' });
+  nodes.get('#eventDate').value = '2026-11-20';
+  nodes.get('#eventEndDate').value = '';
+  nodes.get('#eventTime').value = '10:00';
+  nodes.get('#eventEndTime').value = '09:30';
+  nodes.get('#eventTitle').value = '面談';
+  submit();
+  assert.equal(context.data.events.length, 0);
+  assert.equal(nodes.get('#eventEndTime').validationMessage, '終了時刻は開始時刻より後にしてください。');
+  nodes.get('#eventTime').value = '';
+  submit();
+  assert.equal(nodes.get('#eventEndTime').validationMessage, '終了時刻は開始時刻と一緒に入力してください。');
+  nodes.get('#eventTime').value = '10:00';
+  nodes.get('#eventEndTime').value = '11:30';
+  submit();
+  const event = context.data.events[0];
+  assert.equal(event.endTime, '11:30');
+  assert.match(selectedAgenda(context.html), /<time>10:00–11:30<\/time>/);
+  assert.equal(nodes.get('#eventEndTime').value, '', '追加後は空に戻す');
+  context.calendarTest.editCalendarEvent(event.id);
+  assert.equal(nodes.get('#editEventEndTime').value, '11:30');
+  nodes.get('#editEventEndTime').value = '12:00';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(event.endTime, '12:00');
+  context.calendarTest.editCalendarEvent(event.id);
+  nodes.get('#editEventTime').value = '';
+  nodes.get('#editEventEndTime').value = '';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.deepEqual([event.time, event.endTime], ['', ''], '終日にすると終了時刻も外す');
+});
+
+test('タイムラインでは終了時刻までの長さで予定を描く', () => {
+  const events = [{ id: 'class', date: '2026-11-19', endDate: '2026-11-19', title: '講義', time: '09:00', endTime: '10:30', repeat: 'none', exceptions: [] }];
+  const { context } = calendarHarness({ date: '2026-11-19T12:00:00', events, withPages: true });
+  context.document.querySelector('[data-calendar-view="day"]').onclick();
+  assert.match(context.html, /data-event-edit="class" data-event-date="2026-11-19" style="top:396px;height:63px;/, '9:00 から 1.5時間 × 44px − 枠の余白');
+  assert.match(context.html, /<time>09:00–10:30<\/time> 講義/);
+});
