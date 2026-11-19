@@ -100,6 +100,14 @@ function monthAgenda(html) {
   return html.split('aria-labelledby="monthAgendaHeading"')[1].split('</section>')[0];
 }
 
+test('スマホ幅でヘッダーの日付を隠すCSSが、カレンダーの今日のセルまで隠さない', () => {
+  // 今日のセルにも today クラスが付くため、`.today` だけを隠すとスマホで今日が消え、以降の日付が1列ずれる。
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const hiddenSelectors = [...css.matchAll(/(?:^|[{}])\s*([^{}@]+)\{[^}]*display:none/g)].flatMap(match => match[1].split(',').map(selector => selector.trim()));
+  assert.ok(hiddenSelectors.includes('.header .today'));
+  assert.ok(!hiddenSelectors.some(selector => /(^|\s)\.today$/.test(selector) && !selector.startsWith('.header')), hiddenSelectors.join(' | '));
+});
+
 test('31日からの前月・翌月移動と年越しで月を飛ばさない', () => {
   const { context, nodes } = calendarHarness();
   nodes.get('#nextMonth').onclick();
