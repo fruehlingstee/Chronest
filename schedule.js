@@ -109,6 +109,64 @@ function eventRepeatLabel(event) {
   return event.repeatUntil ? `${label}（${event.repeatUntil}まで）` : label;
 }
 
+// ---- 予定の通知 ----
+// 値は「開始の何分前か」。終日の予定は時刻が無いので、当日9:00を開始とみなして計算する。
+const EVENT_REMINDER_OPTIONS = [['', '通知なし'], ['0', '開始時刻'], ['5', '5分前'], ['10', '10分前'], ['15', '15分前'], ['30', '30分前'], ['60', '1時間前'], ['1440', '1日前']];
+const EVENT_ALL_DAY_REMINDER_TIME = '09:00';
+const EVENT_REMINDER_MAX_MINUTES = 10080; // 1週間前まで
+// 通知時刻を過ぎてから1時間以内にアプリを開いていれば通知する。それより古い通知はまとめて出さない。
+const EVENT_REMINDER_GRACE_MS = 60 * 60 * 1000;
+
+function eventReminderMinutes(event) {
+  return Number.isInteger(event.reminder) && event.reminder >= 0 && event.reminder <= EVENT_REMINDER_MAX_MINUTES ? event.reminder : null;
+}
+
+// 端末の時計（ローカル時刻）での日付キー。
+function scheduleLocalKey(date) {
+  return `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+// 日付キーと 'HH:MM' から、ローカル時刻の Date を作る。年が0〜99でも1900年代にならないよう setFullYear を使う。
+function scheduleLocalDateTime(key, time) {
+  const date = new Date(2000, 0, 1, 0, 0, 0, 0);
+  date.setFullYear(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, Number(key.slice(8, 10)));
+  date.setHours(Number(time.slice(0, 2)), Number(time.slice(3, 5)), 0, 0);
+  return date;
+}
+
+// 今通知すべき回の開始日を返す。通知済み（remindedStart 以前）の回や、通知時刻から時間が経ちすぎた回は対象外。
+function eventReminderDue(event, now) {
+  const minutes = eventReminderMinutes(event);
+  if (minutes === null) return '';
+  const nowTime = now.getTime();
+  const today = scheduleLocalKey(now);
+  // 前日深夜に始まる回から、通知の前倒し日数ぶん先の回までを調べれば十分。
+  const from = scheduleAddDays(today, -1) || today;
+  const to = scheduleAddDays(today, Math.ceil(minutes / 1440) + 1) || '9999-12-31';
+  for (const { start } of eventOccurrencesBetween(event, from, to)) {
+    if (start < from || (event.remindedStart && start <= event.remindedStart)) continue;
+    const notifyAt = scheduleLocalDateTime(start, event.time || EVENT_ALL_DAY_REMINDER_TIME).getTime() - minutes * 60000;
+    if (notifyAt <= nowTime && nowTime - notifyAt < EVENT_REMINDER_GRACE_MS) return start;
+  }
+  return '';
+}
+
+// 「30分前」「前日9:00」のような通知タイミングの説明。通知しない予定は ''。
+function eventReminderLabel(event) {
+  const minutes = eventReminderMinutes(event);
+  if (minutes === null) return '';
+  if (event.time) {
+    const option = EVENT_REMINDER_OPTIONS.find(([value]) => value === String(minutes));
+    return option ? option[1] : `${minutes}分前`;
+  }
+  // 終日の予定は、当日9:00から何分前かを実際の日時で表す（例: 30分前 → 当日8:30）。
+  const total = 9 * 60 - minutes;
+  const dayOffset = Math.floor(total / 1440);
+  const inDay = ((total % 1440) + 1440) % 1440;
+  const dayName = dayOffset === 0 ? '当日' : dayOffset === -1 ? '前日' : `${-dayOffset}日前`;
+  return `${dayName}${Math.floor(inDay / 60)}:${String(inDay % 60).padStart(2, '0')}`;
+}
+
 // 繰り返しの種類に対して期間が長すぎる場合のメッセージ。問題なければ ''。
 function eventRepeatSpanError(repeat, span) {
   const max = EVENT_REPEAT_MAX_SPAN[repeat];

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = [] } = {}) {
+function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = [], notificationPermission } = {}) {
   const nodes = new Map();
   let buttons = [];
   const unescape = value => value.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -68,6 +68,17 @@ function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = []
       context.bind();
     }
   };
+  // 通知の許可状態を指定したときだけ、ブラウザの通知機能の代わりを用意し、表示した通知を記録する。
+  if (notificationPermission) {
+    const Notification = {
+      permission: notificationPermission,
+      requestPermission() { context.permissionRequests = (context.permissionRequests || 0) + 1; return Promise.resolve(context.permissionAnswer || 'denied'); }
+    };
+    context.window = { Notification };
+    context.Notification = Notification;
+  }
+  context.notifications = [];
+  context.showAppNotification = (body, tag) => context.notifications.push({ body, tag });
   const source = fs.readFileSync(path.join(__dirname, '..', 'enhancements.js'), 'utf8').replace(/\r\n/g, '\n');
   const exposed = source.replace('  resetDailyTasks();\n  render();', `  globalThis.calendarTest = { parseCalendarDate, calendarDateKey, editCalendarEvent, checkReminders, getState: () => ({ selectedDay, eventDraft }) };\n  resetDailyTasks();\n  render();`);
   assert.notEqual(exposed, source, 'カレンダーのテスト用関数を公開できること');
@@ -483,4 +494,64 @@ test('選択日の一覧では、前日から続く期間の回を先に、そ�
   assert.ok(order.every(index => index >= 0));
   assert.deepEqual(order, [...order].sort((a, b) => a - b));
   assert.match(agenda, /期間中|終了/);
+});
+
+test('通知つきの予定を作成すると通知設定を保存し、一覧に通知のタイミングを表示する', () => {
+  const { context, nodes, submit } = calendarHarness({ date: '2026-11-19T12:00:00' });
+  nodes.get('#eventDate').value = '2026-11-20';
+  nodes.get('#eventEndDate').value = '';
+  nodes.get('#eventTime').value = '10:00';
+  nodes.get('#eventReminder').value = '30';
+  nodes.get('#eventTitle').value = '面談';
+  submit();
+  const event = context.data.events[0];
+  assert.equal(event.reminder, 30);
+  assert.equal(event.remindedStart, '');
+  assert.match(selectedAgenda(context.html), /通知 30分前/);
+  assert.equal(nodes.get('#eventReminder').value, '', '追加後は通知を初期値に戻す');
+  // このテスト環境には通知機能が無いので、届かないことを画面で知らせる。
+  assert.match(context.html, /このブラウザは通知に対応していない/);
+});
+
+test('通知の許可済みなら、時刻になった回を1回だけ通知して記録する', () => {
+  const events = [{ id: 'class', date: '2026-11-03', endDate: '2026-11-03', time: '10:00', title: '授業', repeat: 'weekly', repeatUntil: '', exceptions: [], reminder: 10, remindedStart: '' }];
+  const { context } = calendarHarness({ date: '2026-11-10T09:52:00', events, notificationPermission: 'granted' });
+  assert.equal(context.notifications.length, 1, '起動時の確認で通知する');
+  assert.equal(context.notifications[0].body, '11/10 10:00 授業');
+  assert.equal(context.notifications[0].tag, 'event-class-2026-11-10');
+  assert.equal(context.data.events[0].remindedStart, '2026-11-10');
+  context.calendarTest.checkReminders();
+  assert.equal(context.notifications.length, 1, '同じ回は二度通知しない');
+});
+
+test('通知の許可前に通知つき予定を作ると許可を求め、断られたら画面で知らせる', async () => {
+  const { context, nodes, submit } = calendarHarness({ date: '2026-11-19T12:00:00', notificationPermission: 'default' });
+  nodes.get('#eventTitle').value = '確認';
+  submit();
+  assert.equal(context.permissionRequests, undefined, '通知なしの予定では許可を求めない');
+  nodes.get('#eventReminder').value = '0';
+  nodes.get('#eventTitle').value = '通知あり';
+  submit();
+  assert.equal(context.permissionRequests, 1);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(context.html, /通知が許可されなかった/);
+});
+
+test('予定の日時や通知を変えると通知済みの記録を消し、タイトルだけなら残す', () => {
+  const events = [{ id: 'meeting', date: '2026-11-20', endDate: '2026-11-20', time: '10:00', title: '会議', reminder: 30, remindedStart: '2026-11-20' }];
+  const { context, nodes } = calendarHarness({ date: '2026-11-19T12:00:00', events, notificationPermission: 'granted' });
+  context.calendarTest.editCalendarEvent('meeting');
+  assert.equal(nodes.get('#editEventReminder').value, '30');
+  nodes.get('#editEventTitle').value = '定例会議';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(context.data.events[0].remindedStart, '2026-11-20');
+  context.calendarTest.editCalendarEvent('meeting');
+  nodes.get('#editEventReminder').value = '10';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(context.data.events[0].reminder, 10);
+  assert.equal(context.data.events[0].remindedStart, '');
+  context.calendarTest.editCalendarEvent('meeting');
+  nodes.get('#editEventReminder').value = '';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(context.data.events[0].reminder, null);
 });

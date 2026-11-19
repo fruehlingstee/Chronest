@@ -82,6 +82,8 @@ input::-webkit-calendar-picker-indicator{opacity:1;cursor:pointer;min-width:20px
 .calendar-options-summary{color:var(--green);font:500 12px 'DM Sans',system-ui,sans-serif}
 .calendar-options-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:4px 14px 14px}
 .calendar-options-grid .select:disabled{opacity:.45;cursor:not-allowed}
+.calendar-options-hint{margin:0;padding:0 14px 14px;color:var(--muted);font-size:12px;line-height:1.6}
+.calendar-notice{margin:12px 0 0}
 .event-repeat-mark{margin-right:3px}
 .danger-actions{display:flex;flex-wrap:wrap;gap:8px}
 @media(max-width:720px){

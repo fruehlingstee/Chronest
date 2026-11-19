@@ -220,6 +220,27 @@ test('invalid repeat settings are rejected as a backup and recovered without ove
   }
 });
 
+test('event reminders survive reload, and malformed reminder values are recovered as no reminder', () => {
+  const valid = JSON.stringify({ tasks: [], notes: [], events: [
+    { id: 'remind', title: '通知あり', date: '2026-11-20', endDate: '2026-11-20', time: '10:00', reminder: 30, remindedStart: '2026-11-13' },
+    { id: 'none', title: '通知なし', date: '2026-11-20', reminder: null }
+  ] });
+  const app = createApp({ stored: valid });
+  assert.equal(app.run('data.events[0].reminder'), 30);
+  assert.equal(app.run('data.events[0].remindedStart'), '2026-11-13');
+  assert.equal(app.run('data.events[1].reminder'), null);
+  assert.equal([...app.storage.keys()].some(key => key.startsWith('dayflow-v2-recovery-')), false);
+  for (const fields of [{ reminder: '30' }, { reminder: -5 }, { reminder: 99999 }, { reminder: 1.5 }, { remindedStart: '2026-02-30' }]) {
+    const original = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'bad', title: '不正な通知', date: '2026-11-20', ...fields }] });
+    const recovered = createApp({ stored: original });
+    assert.equal(recovered.run('data.events.length'), 1, JSON.stringify(fields));
+    assert.equal(recovered.run('data.events[0].reminder'), null, JSON.stringify(fields));
+    assert.equal(recovered.run('data.events[0].remindedStart'), '', JSON.stringify(fields));
+    recovered.run('save()');
+    assert.ok([...recovered.storage.keys()].some(key => key.startsWith('dayflow-v2-recovery-')), JSON.stringify(fields));
+  }
+});
+
 test('TODAY shows a weekly event only on its repeating days and not on skipped dates', () => {
   const stored = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'weekly', title: '毎週の授業', date: '2026-11-03', endDate: '2026-11-03', time: '10:40', repeat: 'weekly', repeatUntil: '', exceptions: ['2026-11-17'] }] });
   for (const [day, shown] of [['03', true], ['10', true], ['11', false], ['17', false], ['24', true]]) {

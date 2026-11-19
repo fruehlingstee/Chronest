@@ -75,6 +75,41 @@ test('繰り返さない旧予定は従来どおり期間の中だけに現れ�
   assert.deepEqual(starts(schedule, { date: '2026-11-20' }, '2026-11-01', '2026-11-30'), ['2026-11-20']);
 });
 
+test('時刻つきの予定は指定した分前から1時間以内だけ通知対象になる', () => {
+  const schedule = loadSchedule();
+  const event = { date: '2026-11-20', endDate: '2026-11-20', time: '10:00', reminder: 30, remindedStart: '' };
+  const at = value => schedule.eventReminderDue(event, new Date(value));
+  assert.equal(at('2026-11-20T09:29:00'), '');
+  assert.equal(at('2026-11-20T09:30:00'), '2026-11-20');
+  assert.equal(at('2026-11-20T10:29:00'), '2026-11-20');
+  assert.equal(at('2026-11-20T10:30:00'), '', '1時間を過ぎた古い通知はまとめて出さない');
+  assert.equal(schedule.eventReminderDue({ ...event, reminder: null }, new Date('2026-11-20T09:45:00')), '');
+  assert.equal(schedule.eventReminderDue({ ...event, remindedStart: '2026-11-20' }, new Date('2026-11-20T09:45:00')), '', '通知済みの回は出さない');
+});
+
+test('繰り返し予定は通知済みの次の回から改めて通知する', () => {
+  const schedule = loadSchedule();
+  const event = { date: '2026-11-03', endDate: '2026-11-03', time: '09:00', repeat: 'weekly', repeatUntil: '', exceptions: ['2026-11-17'], reminder: 10, remindedStart: '2026-11-03' };
+  assert.equal(schedule.eventReminderDue(event, new Date('2026-11-03T08:55:00')), '');
+  assert.equal(schedule.eventReminderDue(event, new Date('2026-11-10T08:50:00')), '2026-11-10');
+  assert.equal(schedule.eventReminderDue({ ...event, remindedStart: '2026-11-10' }, new Date('2026-11-17T08:50:00')), '', '削除した回は通知しない');
+  assert.equal(schedule.eventReminderDue({ ...event, remindedStart: '2026-11-10' }, new Date('2026-11-24T08:50:00')), '2026-11-24');
+});
+
+test('終日の予定は当日9:00を基準にし、前日や深夜0時をまたぐ通知も扱う', () => {
+  const schedule = loadSchedule();
+  const allDay = { date: '2026-11-20', endDate: '2026-11-22', time: '', reminder: 1440, remindedStart: '' };
+  assert.equal(schedule.eventReminderDue(allDay, new Date('2026-11-19T08:59:00')), '');
+  assert.equal(schedule.eventReminderDue(allDay, new Date('2026-11-19T09:00:00')), '2026-11-20');
+  assert.equal(schedule.eventReminderLabel(allDay), '前日9:00');
+  assert.equal(schedule.eventReminderLabel({ ...allDay, reminder: 0 }), '当日9:00');
+  assert.equal(schedule.eventReminderLabel({ ...allDay, reminder: 30 }), '当日8:30');
+  const midnight = { date: '2026-11-21', endDate: '2026-11-21', time: '00:10', reminder: 30, remindedStart: '' };
+  assert.equal(schedule.eventReminderDue(midnight, new Date('2026-11-20T23:40:00')), '2026-11-21');
+  assert.equal(schedule.eventReminderLabel(midnight), '30分前');
+  assert.equal(schedule.eventReminderLabel({ ...midnight, reminder: 1440 }), '1日前');
+});
+
 test('次の回と重なる長さの繰り返しを検出する', () => {
   const schedule = loadSchedule();
   assert.equal(schedule.eventRepeatSpanError('none', 400), '');

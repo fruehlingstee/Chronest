@@ -345,10 +345,11 @@
 
   let selectedDay = todayKey();
   // 作成フォームの「繰り返し」などの初期値。予定を追加した後はここへ戻す。
-  const emptyEventOptions = () => ({ repeat: 'none', repeatUntil: '' });
+  const emptyEventOptions = () => ({ repeat: 'none', repeatUntil: '', reminder: '' });
   let eventDraft = { date: selectedDay, endDate: selectedDay, time: '', title: '', ...emptyEventOptions() };
   let eventDraftStart = selectedDay;
   let eventOptionsOpen = false;
+  let calendarNotice = '';
 
   function parseCalendarDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -394,7 +395,8 @@
       time: document.querySelector('#eventTime').value,
       title: document.querySelector('#eventTitle').value,
       repeat: document.querySelector('#eventRepeat').value || 'none',
-      repeatUntil: document.querySelector('#eventRepeatUntil').value
+      repeatUntil: document.querySelector('#eventRepeatUntil').value,
+      reminder: document.querySelector('#eventReminder').value
     };
   }
 
@@ -434,8 +436,29 @@
     const date = fields.date.value, repeat = fields.repeat.value || 'none';
     return {
       title: fields.title.value.trim(), date, endDate: fields.endDate.value || date, time: fields.time.value,
-      repeat, repeatUntil: repeat === 'none' ? '' : fields.repeatUntil.value
+      repeat, repeatUntil: repeat === 'none' ? '' : fields.repeatUntil.value,
+      reminder: fields.reminder.value === '' ? null : Number(fields.reminder.value)
     };
+  }
+
+  // 通知を選んだときに、まだ許可を求めていなければブラウザに許可を求める。
+  // 予定の追加・保存ボタンを押した直後（利用者の操作の直後）に呼ぶ必要がある。
+  function ensureNotificationPermission() {
+    if (!('Notification' in window)) {
+      calendarNotice = 'このブラウザは通知に対応していないため、予定の通知は届きません。';
+      return;
+    }
+    if (Notification.permission === 'granted') return;
+    if (Notification.permission === 'denied') {
+      calendarNotice = '通知がブロックされています。ブラウザの設定でこのサイトの通知を許可してください。';
+      return;
+    }
+    const request = Notification.requestPermission();
+    if (request && typeof request.then === 'function') request.then(permission => {
+      if (permission === 'granted') return;
+      calendarNotice = '通知が許可されなかったため、予定の通知は届きません。';
+      if (page === 'calendar') render();
+    }).catch(() => {});
   }
 
   function editCalendarEvent(id, occurrenceStart = '') {
@@ -457,8 +480,9 @@
           <div><label for="editEventTime">開始時刻（空欄は終日）</label><input class="input" id="editEventTime" type="time" value="${esc(item.time || '')}"></div>
           <div><label for="editEventRepeat">繰り返し</label><select class="select" id="editEventRepeat">${selectOptions(EVENT_REPEAT_OPTIONS, eventRepeat(item))}</select></div>
           <div><label for="editEventRepeatUntil">繰り返しの終了日（空欄は無期限）</label><input class="input" id="editEventRepeatUntil" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(item.repeatUntil || '')}" ${repeating ? '' : 'disabled'}></div>
+          <div><label for="editEventReminder">通知</label><select class="select" id="editEventReminder">${selectOptions(EVENT_REMINDER_OPTIONS, eventReminderMinutes(item) ?? '')}</select></div>
         </div>
-        <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。${repeating ? '繰り返し予定の変更は、すべての回に反映されます。' : ''}</p>
+        <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。${repeating ? '繰り返し予定の変更は、すべての回に反映されます。' : ''}通知はDAYFLOWを開いている間に届き、終日の予定は当日9:00を基準にします。</p>
         <div class="modal-actions"><button class="button dim" type="button" id="cancelEventEdit">キャンセル</button><button class="button" type="submit">保存</button></div>
       </form>
       <div class="danger-zone">${deleteZone}</div>`);
@@ -466,7 +490,8 @@
     const fields = {
       title: document.querySelector('#editEventTitle'), date: document.querySelector('#editEventDate'),
       endDate: document.querySelector('#editEventEndDate'), time: document.querySelector('#editEventTime'),
-      repeat: document.querySelector('#editEventRepeat'), repeatUntil: document.querySelector('#editEventRepeatUntil')
+      repeat: document.querySelector('#editEventRepeat'), repeatUntil: document.querySelector('#editEventRepeatUntil'),
+      reminder: document.querySelector('#editEventReminder')
     };
     let previousStart = item.date;
     [fields.title, fields.endDate, fields.time, fields.repeatUntil].forEach(input => input.oninput = () => input.setCustomValidity(''));
@@ -491,7 +516,14 @@
       const next = eventFieldsFrom(fields);
       // 開始日や繰り返し方が変わると、「この回だけ削除」した日が別の回を指してしまうため解除する。
       const keepExceptions = next.repeat !== 'none' && next.date === item.date && next.repeat === eventRepeat(item);
+      // 日時や通知のタイミングが変わったら、変更後の時刻でもう一度通知できるよう通知済みの記録を消す。
+      // 旧データで項目が無い場合も「繰り返しなし・通知なし」とみなして比べる。
+      const before = { date: item.date, time: item.time || '', repeat: eventRepeat(item), repeatUntil: item.repeatUntil || '', reminder: eventReminderMinutes(item) };
+      const timingChanged = Object.keys(before).some(key => before[key] !== next[key]);
       Object.assign(item, next, { exceptions: keepExceptions ? (item.exceptions || []) : [] });
+      if (timingChanged) item.remindedStart = '';
+      calendarNotice = '';
+      if (timingChanged && next.reminder !== null) ensureNotificationPermission();
       save();
       closeModal();
       // 繰り返し予定は、開いていた回の近くに表示を残す（開始日まで何か月も戻らないように）。
@@ -534,6 +566,7 @@
       const parts = [];
       if (occurrence.start !== occurrence.end) parts.push(`${rangeLabel(occurrence)} · ${event.time ? `開始 ${event.time}` : '終日'}`);
       if (eventRepeat(event) !== 'none') parts.push(`↻ ${eventRepeatLabel(event)}`);
+      if (eventReminderMinutes(event) !== null) parts.push(`通知 ${eventReminderLabel(event)}`);
       if (extra) parts.push(extra);
       return parts.length ? `<small class="event-range-label">${parts.map(esc).join(' · ')}</small>` : '';
     };
@@ -569,7 +602,12 @@
       event, occurrence: occurrences[0], count: occurrences.length,
       visibleDate: occurrences[0].start < firstKey ? firstKey : occurrences[0].start
     })).sort((a, b) => a.visibleDate.localeCompare(b.visibleDate) || compareOccurrences(a, b));
-    const optionSummary = [eventDraft.repeat !== 'none' ? EVENT_REPEAT_OPTIONS.find(([value]) => value === eventDraft.repeat)?.[1] : ''].filter(Boolean).join('・');
+    // 折りたたんだ状態でも、選んでいる設定が分かるように見出しへ要約を出す。
+    const optionLabel = (options, value) => options.find(([key]) => key === String(value))?.[1] || '';
+    const optionSummary = [
+      eventDraft.repeat !== 'none' ? optionLabel(EVENT_REPEAT_OPTIONS, eventDraft.repeat) : '',
+      eventDraft.reminder !== '' ? `通知 ${optionLabel(EVENT_REMINDER_OPTIONS, eventDraft.reminder)}` : ''
+    ].filter(Boolean).join('・');
     return `<main class="page calendar-page">
       <div class="page-head"><h1 class="title" aria-live="polite">${year}年 ${currentMonth + 1}月</h1><div class="calendar-navigation"><button class="ghost" id="prevMonth" aria-label="前の月" ${year === 1 && currentMonth === 0 ? 'disabled' : ''}>←</button><button class="ghost" id="todayMonth">今日</button><button class="ghost" id="nextMonth" aria-label="次の月" ${year === 9999 && currentMonth === 11 ? 'disabled' : ''}>→</button></div></div>
       <form class="toolbar calendar-form" id="eventForm">
@@ -579,13 +617,16 @@
         <div class="field calendar-title-field"><label for="eventTitle">タイトル</label><input class="input" id="eventTitle" maxlength="120" required placeholder="新しい予定" value="${esc(eventDraft.title)}"></div>
         <button class="button" type="submit">予定を追加</button>
         <details class="calendar-options" id="eventOptions" ${eventOptionsOpen || optionSummary ? 'open' : ''}>
-          <summary>繰り返し${optionSummary ? `<span class="calendar-options-summary">${esc(optionSummary)}</span>` : ''}</summary>
+          <summary>繰り返し・通知${optionSummary ? `<span class="calendar-options-summary">${esc(optionSummary)}</span>` : ''}</summary>
           <div class="calendar-options-grid">
             <div class="field"><label for="eventRepeat">繰り返し</label><select class="select" id="eventRepeat">${selectOptions(EVENT_REPEAT_OPTIONS, eventDraft.repeat)}</select></div>
             <div class="field"><label for="eventRepeatUntil">繰り返しの終了日（空欄は無期限）</label><input class="select" id="eventRepeatUntil" type="date" min="${esc(eventDraft.date)}" max="9999-12-31" value="${esc(eventDraft.repeatUntil)}" ${eventDraft.repeat === 'none' ? 'disabled' : ''}></div>
+            <div class="field"><label for="eventReminder">通知</label><select class="select" id="eventReminder">${selectOptions(EVENT_REMINDER_OPTIONS, eventDraft.reminder)}</select></div>
           </div>
+          <p class="calendar-options-hint">通知はDAYFLOWを開いている間に届きます。終日の予定は当日9:00を基準にします。</p>
         </details>
       </form>
+      <p class="task-notice calendar-notice" role="status" ${calendarNotice ? '' : 'hidden'}>${esc(calendarNotice)}</p>
       <p class="calendar-period-hint">開始日〜終了日をまとめて登録。日付を選ぶと下に予定を表示します。時刻は開始日のみに適用されます。</p>
       <section class="panel calendar-panel" aria-label="${year}年${currentMonth + 1}月のカレンダー"><div class="calendar">${cells.join('')}</div></section>
       <section class="panel calendar-agenda" aria-labelledby="selectedDayHeading"><h3 class="calendar-selection-heading" id="selectedDayHeading">${esc(selectedDay)} の予定 <span>${selectedEvents.length + selectedTasks.length}件</span></h3>
@@ -640,10 +681,20 @@
     let changed = false;
     data.tasks.forEach(task => {
       if (!task.done && task.reminderAt && !task.notified && new Date(task.reminderAt).getTime() <= Date.now()) {
-        new Notification('Dayflow', { body: task.title });
+        showAppNotification(task.title, `task-${task.id}`);
         task.notified = true;
         changed = true;
       }
+    });
+    // 予定は回ごとに通知する。通知した回の開始日を remindedStart に記録し、同じ回を二度通知しない。
+    const now = new Date();
+    data.events.forEach(event => {
+      const start = eventReminderDue(event, now);
+      if (!start) return;
+      const when = `${Number(start.slice(5, 7))}/${Number(start.slice(8, 10))} ${event.time || '終日'}`;
+      showAppNotification(`${when} ${event.title}`, `event-${event.id}-${start}`);
+      event.remindedStart = start;
+      changed = true;
     });
     if (changed) save();
   }
@@ -738,12 +789,14 @@
       const fields = {
         title: document.querySelector('#eventTitle'), date: document.querySelector('#eventDate'),
         endDate: document.querySelector('#eventEndDate'), time: document.querySelector('#eventTime'),
-        repeat: document.querySelector('#eventRepeat'), repeatUntil: document.querySelector('#eventRepeatUntil')
+        repeat: document.querySelector('#eventRepeat'), repeatUntil: document.querySelector('#eventRepeatUntil'),
+        reminder: document.querySelector('#eventReminder')
       };
       [fields.title, fields.endDate, fields.time, fields.repeatUntil].forEach(input => input.oninput = () => {
         input.setCustomValidity('');
         rememberEventDraft();
       });
+      fields.reminder.onchange = () => rememberEventDraft();
       fields.repeat.onchange = () => {
         fields.endDate.setCustomValidity('');
         fields.repeatUntil.disabled = fields.repeat.value === 'none';
@@ -772,9 +825,11 @@
         const next = eventFieldsFrom(fields);
         data.events.push({
           id: globalThis.crypto?.randomUUID?.() || `event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          ...next, exceptions: []
+          ...next, exceptions: [], remindedStart: ''
         });
         eventDraft = { date: next.date, endDate: next.date, time: '', title: '', ...emptyEventOptions() };
+        calendarNotice = '';
+        if (next.reminder !== null) ensureNotificationPermission();
         save();
         selectCalendarDay(next.date);
         document.querySelector('#eventTitle').focus();

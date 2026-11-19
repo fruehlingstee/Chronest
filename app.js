@@ -63,6 +63,9 @@ function normalizeData(input, options = {}) {
       (item.repeatUntil === undefined || item.repeatUntil === '' || (isDateKey(item.repeatUntil) && item.repeatUntil >= item.date)) &&
       (item.exceptions === undefined || (Array.isArray(item.exceptions) && item.exceptions.every(isDateKey)));
   };
+  // 通知は「何分前か」の整数。null（JSONで保存した「通知なし」）も受け付ける。
+  const reminderValid = item => (item.reminder === undefined || item.reminder === null || item.reminder === '' || eventReminderMinutes(item) !== null) &&
+    optionalDateValid(item, 'remindedStart');
   const normalizeSubtasks = items => {
     const seen = new Set();
     return (Array.isArray(items) ? items : []).filter(sub => object(sub) && titleValid(sub)).map(sub => {
@@ -95,7 +98,7 @@ function normalizeData(input, options = {}) {
     events: collection('events', true, item => titleValid(item) && isDateKey(item.date) && (!strict || (
       (item.endDate === undefined || item.endDate === '' || (isDateKey(item.endDate) && item.endDate >= item.date)) &&
       (item.time === undefined || item.time === '' || Boolean(time(item.time))) &&
-      eventRepeatValid(item)
+      eventRepeatValid(item) && reminderValid(item)
     )), item => {
       const endDate = isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date;
       let repeat = knownRepeat(item.repeat) ? item.repeat : 'none';
@@ -104,7 +107,8 @@ function normalizeData(input, options = {}) {
       return {
         id: id(item.id), title: item.title, date: item.date, endDate, time: time(item.time), repeat,
         repeatUntil: repeat !== 'none' && isDateKey(item.repeatUntil) && item.repeatUntil >= item.date ? item.repeatUntil : '',
-        exceptions: repeat !== 'none' && Array.isArray(item.exceptions) ? [...new Set(item.exceptions.filter(isDateKey))].sort() : []
+        exceptions: repeat !== 'none' && Array.isArray(item.exceptions) ? [...new Set(item.exceptions.filter(isDateKey))].sort() : [],
+        reminder: eventReminderMinutes(item), remindedStart: date(item.remindedStart)
       };
     }),
     notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created) })),
@@ -146,6 +150,21 @@ function save() {
     return false;
   }
 }
+// 通知を表示する。Service Worker があればそちらで表示する（Androidでは new Notification が使えないため）。
+function showAppNotification(body, tag = '') {
+  const options = { body, tag, icon: 'icons/icon-192.png' };
+  const fallback = () => {
+    try { new Notification('Dayflow', options); } catch (_) { /* 表示できなくても、通知済みの記録は続ける。 */ }
+  };
+  try {
+    const worker = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
+    if (worker && typeof worker.getRegistration === 'function') {
+      worker.getRegistration().then(registration => registration ? registration.showNotification('Dayflow', options) : fallback()).catch(fallback);
+      return;
+    }
+  } catch (_) { /* Service Worker を確認できない環境では通常の通知を使う。 */ }
+  fallback();
+}
 const dayKey=d=>`${String(d.getFullYear()).padStart(4,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`, jp=d=>new Intl.DateTimeFormat('ja-JP',{month:'long',day:'numeric',weekday:'short'}).format(d);
 function shell(content){return `<div class="app"><header class="header"><div class="brand"><b>▸</b> DAYFLOW</div><nav class="nav" aria-label="メインナビゲーション">${[['home','ホーム'],['tasks','TASKS'],['calendar','CALENDAR'],['notes','NOTES'],['focus','FOCUS'],['tools','TOOLS']].map(x=>`<button class="${page===x[0]?'active':''}" data-page="${x[0]}" ${page===x[0]?'aria-current="page"':''}>${x[1]}</button>`).join('')}</nav><div class="today">${jp(new Date())}</div></header><p id="storageNotice" role="status" ${storageWarning?'':'hidden'}>${esc(storageWarning)}</p>${content}</div>`}
 function render(){let c=page==='home'?home():page==='tasks'?tasks():page==='calendar'?calendar():page==='notes'?notes():page==='tools'?toolbox():focus();$('#app').innerHTML=shell(c);document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;render()});bind()}
@@ -178,7 +197,7 @@ function updateFocusTimer() {
   data.sessions.unshift({date:dayKey(new Date(focusEndAt)),minutes:focusDuration/60,task:focusTaskName.trim()});
   save();
   try {
-    if ('Notification' in window && Notification.permission === 'granted') new Notification('Dayflow',{body:'集中セッションが完了しました。'});
+    if ('Notification' in window && Notification.permission === 'granted') showAppNotification('集中セッションが完了しました。', 'focus');
   } catch (_) { /* 通知を表示できなくても集中記録は保存する。 */ }
   if (page === 'focus') render();
 }
