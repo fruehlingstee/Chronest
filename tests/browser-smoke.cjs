@@ -21,7 +21,7 @@ async function main() {
   try {
     const edge = process.env.DAYFLOW_BROWSER_PATH || path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Microsoft/Edge/Application/msedge.exe');
     browser = await chromium.launch({ headless: true, ...(fs.existsSync(edge) ? { executablePath: edge } : {}) });
-    const context = await browser.newContext({ timezoneId: 'Asia/Tokyo', viewport: { width: 1440, height: 1050 } });
+    const context = await browser.newContext({ timezoneId: 'Asia/Tokyo', viewport: { width: 1440, height: 1050 }, serviceWorkers: 'block' });
     const origin = `http://127.0.0.1:${server.address().port}`;
     const localFiles = pathToFileURL(root + path.sep).href;
     // 外部通信を切った状態でも、同梱したライブラリでQRが動作することを検証する。
@@ -41,7 +41,7 @@ async function main() {
     assert.equal(await page.locator('#installHelpClose').isVisible(), true);
     await page.locator('#installHelpClose').click();
 
-    const phone = await browser.newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const phone = await browser.newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
     await phone.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
     const phonePage = await phone.newPage();
     await phonePage.goto(origin);
