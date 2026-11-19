@@ -555,3 +555,44 @@ test('予定の日時や通知を変えると通知済みの記録を消し、�
   nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
   assert.equal(context.data.events[0].reminder, null);
 });
+
+test('色が自動の予定は1日を青・期間を緑で表示し、選んだ色は期間の全日と印・一覧に使う', () => {
+  const events = [
+    { id: 'auto-single', date: '2026-01-10', endDate: '2026-01-10', title: '単日', time: '' },
+    { id: 'auto-range', date: '2026-01-12', endDate: '2026-01-13', title: '期間', time: '' },
+    { id: 'purple-range', date: '2026-01-20', endDate: '2026-01-22', title: '紫の期間', time: '', color: 'purple' }
+  ];
+  const { context } = calendarHarness({ events });
+  assert.match(calendarDay(context.html, '2026-01-10'), /colored-event event-color-blue[^"]*" data-event-edit="auto-single"/);
+  assert.match(calendarDay(context.html, '2026-01-12'), /event-color-green[^"]*" data-event-edit="auto-range"/);
+  for (const day of ['20', '21', '22']) {
+    const cell = calendarDay(context.html, '2026-01-' + day);
+    assert.match(cell, /event-color-purple[^"]*" data-event-edit="purple-range"/);
+    assert.match(cell, /calendar-dot range-dot colored-dot event-color-purple/);
+  }
+  assert.match(monthAgenda(context.html), /event-swatch event-color-purple/);
+});
+
+test('作成・編集で選んだ色を保存し、入力中の色は見出しにも表示する', () => {
+  const { context, nodes, submit } = calendarHarness();
+  nodes.get('#eventColor').value = 'pink';
+  nodes.get('#eventColor').onchange();
+  nodes.get('#nextMonth').onclick();
+  assert.equal(nodes.get('#eventColor').value, 'pink');
+  assert.match(context.html, /calendar-options-summary">色 ピンク</);
+  nodes.get('#eventTitle').value = 'ピンクの予定';
+  submit();
+  const event = context.data.events[0];
+  assert.equal(event.color, 'pink');
+  assert.equal(nodes.get('#eventColor').value, '', '追加後は自動に戻す');
+  context.calendarTest.editCalendarEvent(event.id);
+  assert.equal(nodes.get('#editEventColor').value, 'pink');
+  nodes.get('#editEventColor').value = 'gray';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(event.color, 'gray');
+  assert.match(calendarDay(context.html, event.date), /event-color-gray/);
+  context.calendarTest.editCalendarEvent(event.id);
+  nodes.get('#editEventColor').value = 'unknown';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(event.color, '', '一覧に無い色は自動として保存する');
+});

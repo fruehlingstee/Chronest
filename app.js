@@ -98,7 +98,8 @@ function normalizeData(input, options = {}) {
     events: collection('events', true, item => titleValid(item) && isDateKey(item.date) && (!strict || (
       (item.endDate === undefined || item.endDate === '' || (isDateKey(item.endDate) && item.endDate >= item.date)) &&
       (item.time === undefined || item.time === '' || Boolean(time(item.time))) &&
-      eventRepeatValid(item) && reminderValid(item)
+      eventRepeatValid(item) && reminderValid(item) &&
+      (item.color === undefined || item.color === '' || Boolean(eventColorChoice(item.color)))
     )), item => {
       const endDate = isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date;
       let repeat = knownRepeat(item.repeat) ? item.repeat : 'none';
@@ -108,7 +109,8 @@ function normalizeData(input, options = {}) {
         id: id(item.id), title: item.title, date: item.date, endDate, time: time(item.time), repeat,
         repeatUntil: repeat !== 'none' && isDateKey(item.repeatUntil) && item.repeatUntil >= item.date ? item.repeatUntil : '',
         exceptions: repeat !== 'none' && Array.isArray(item.exceptions) ? [...new Set(item.exceptions.filter(isDateKey))].sort() : [],
-        reminder: eventReminderMinutes(item), remindedStart: date(item.remindedStart)
+        reminder: eventReminderMinutes(item), remindedStart: date(item.remindedStart),
+        color: eventColorChoice(item.color)
       };
     }),
     notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created) })),

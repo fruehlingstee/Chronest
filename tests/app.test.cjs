@@ -241,6 +241,16 @@ test('event reminders survive reload, and malformed reminder values are recovere
   }
 });
 
+test('event colors are kept, and unknown colors are recovered as automatic', () => {
+  const app = createApp({ stored: JSON.stringify({ tasks: [], notes: [], events: [{ id: 'color', title: '色つき', date: '2026-11-20', color: 'purple' }] }) });
+  assert.equal(app.run('data.events[0].color'), 'purple');
+  const original = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'bad', title: '不明な色', date: '2026-11-20', color: '#ff0000' }] });
+  const recovered = createApp({ stored: original });
+  assert.equal(recovered.run('data.events[0].color'), '');
+  recovered.run('save()');
+  assert.ok([...recovered.storage.keys()].some(key => key.startsWith('dayflow-v2-recovery-')));
+});
+
 test('TODAY shows a weekly event only on its repeating days and not on skipped dates', () => {
   const stored = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'weekly', title: '毎週の授業', date: '2026-11-03', endDate: '2026-11-03', time: '10:40', repeat: 'weekly', repeatUntil: '', exceptions: ['2026-11-17'] }] });
   for (const [day, shown] of [['03', true], ['10', true], ['11', false], ['17', false], ['24', true]]) {

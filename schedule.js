@@ -167,6 +167,21 @@ function eventReminderLabel(event) {
   return `${dayName}${Math.floor(inDay / 60)}:${String(inDay % 60).padStart(2, '0')}`;
 }
 
+// ---- 予定の色 ----
+// '' は自動（1日だけの予定は青、期間の予定は緑。色分けを追加する前と同じ見た目）。
+const EVENT_COLOR_OPTIONS = [['', '自動（1日は青・期間は緑）'], ['blue', '青'], ['green', '緑'], ['purple', '紫'], ['pink', 'ピンク'], ['gray', 'グレー']];
+
+function eventColorChoice(value) {
+  return EVENT_COLOR_OPTIONS.some(([key]) => key && key === value) ? value : '';
+}
+
+// 表示に使う色。自動の場合は、その回が複数日かどうかで決める。
+function eventColor(event, occurrence) {
+  const chosen = eventColorChoice(event.color);
+  if (chosen) return chosen;
+  return occurrence && occurrence.start !== occurrence.end ? 'green' : 'blue';
+}
+
 // 繰り返しの種類に対して期間が長すぎる場合のメッセージ。問題なければ ''。
 function eventRepeatSpanError(repeat, span) {
   const max = EVENT_REPEAT_MAX_SPAN[repeat];

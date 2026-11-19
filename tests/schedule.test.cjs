@@ -110,6 +110,15 @@ test('終日の予定は当日9:00を基準にし、前日や深夜0時をまた
   assert.equal(schedule.eventReminderLabel({ ...midnight, reminder: 1440 }), '1日前');
 });
 
+test('予定の色は選んだ色を優先し、自動なら回の長さで青か緑にする', () => {
+  const schedule = loadSchedule();
+  assert.equal(schedule.eventColor({ color: 'purple' }, { start: '2026-11-20', end: '2026-11-20' }), 'purple');
+  assert.equal(schedule.eventColor({ color: '' }, { start: '2026-11-20', end: '2026-11-20' }), 'blue');
+  assert.equal(schedule.eventColor({}, { start: '2026-11-20', end: '2026-11-22' }), 'green');
+  assert.equal(schedule.eventColor({ color: 'red' }, { start: '2026-11-20', end: '2026-11-20' }), 'blue', '一覧に無い色は自動扱い');
+  assert.equal(schedule.eventColorChoice('constructor'), '', 'オブジェクトの組み込み名を色として受け付けない');
+});
+
 test('次の回と重なる長さの繰り返しを検出する', () => {
   const schedule = loadSchedule();
   assert.equal(schedule.eventRepeatSpanError('none', 400), '');
