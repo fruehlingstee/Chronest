@@ -344,8 +344,11 @@
   };
 
   let selectedDay = todayKey();
-  let eventDraft = { date: selectedDay, endDate: selectedDay, time: '', title: '' };
+  // 作成フォームの「繰り返し」などの初期値。予定を追加した後はここへ戻す。
+  const emptyEventOptions = () => ({ repeat: 'none', repeatUntil: '' });
+  let eventDraft = { date: selectedDay, endDate: selectedDay, time: '', title: '', ...emptyEventOptions() };
   let eventDraftStart = selectedDay;
+  let eventOptionsOpen = false;
 
   function parseCalendarDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -358,25 +361,13 @@
     return `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   }
 
-  function compareEvents(a, b) {
-    return a.date.localeCompare(b.date) || (a.time || '').localeCompare(b.time || '') || a.title.localeCompare(b.title, 'ja');
+  // 同じ日の中では「前から続いている回 → 終日 → 時刻順 → タイトル順」に並べる。
+  function compareOccurrences(a, b) {
+    return a.occurrence.start.localeCompare(b.occurrence.start) || (a.event.time || '').localeCompare(b.event.time || '') || a.event.title.localeCompare(b.event.title, 'ja');
   }
 
-  function eventEndDate(event) {
-    return event.endDate || event.date;
-  }
-
-  function eventIncludesDay(event, key) {
-    return event.date <= key && key <= eventEndDate(event);
-  }
-
-  function eventRangeLabel(event) {
-    return eventEndDate(event) === event.date ? event.date : `${event.date} 〜 ${eventEndDate(event)}`;
-  }
-
-  function eventPhase(event, key) {
-    if (eventEndDate(event) === event.date) return 'single';
-    return key === event.date ? 'start' : key === eventEndDate(event) ? 'end' : 'middle';
+  function rangeLabel(occurrence) {
+    return occurrence.start === occurrence.end ? occurrence.start : `${occurrence.start} 〜 ${occurrence.end}`;
   }
 
   function shiftEventRange(start, end, nextStart) {
@@ -401,7 +392,9 @@
       date: document.querySelector('#eventDate').value,
       endDate: document.querySelector('#eventEndDate').value,
       time: document.querySelector('#eventTime').value,
-      title: document.querySelector('#eventTitle').value
+      title: document.querySelector('#eventTitle').value,
+      repeat: document.querySelector('#eventRepeat').value || 'none',
+      repeatUntil: document.querySelector('#eventRepeatUntil').value
     };
   }
 
@@ -416,62 +409,105 @@
     if (focusDay) document.querySelector(`[data-calendar-day="${key}"]`)?.focus();
   }
 
-  function validateEventForm(form, titleInput, dateInput, timeInput, endDateInput) {
-    titleInput.setCustomValidity(titleInput.value.trim() ? '' : '予定のタイトルを入力してください。');
-    dateInput.setCustomValidity(parseCalendarDate(dateInput.value) ? '' : '正しい日付を入力してください。');
-    timeInput.setCustomValidity(!timeInput.value || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(timeInput.value) ? '' : '正しい時刻を入力してください。');
-    endDateInput.setCustomValidity(!endDateInput.value ? '' : !parseCalendarDate(endDateInput.value) ? '正しい終了日を入力してください。' : endDateInput.value < dateInput.value ? '終了日は開始日以降にしてください。' : '');
+  function selectOptions(options, selected) {
+    return options.map(([value, label]) => `<option value="${esc(value)}" ${String(selected) === value ? 'selected' : ''}>${esc(label)}</option>`).join('');
+  }
+
+  // 作成フォームと編集画面で共通の入力チェック。問題があれば欄にメッセージを付けて false を返す。
+  function validateEventForm(form, fields) {
+    const { title, date, endDate, time, repeat, repeatUntil } = fields;
+    const repeatValue = repeat.value || 'none';
+    title.setCustomValidity(title.value.trim() ? '' : '予定のタイトルを入力してください。');
+    date.setCustomValidity(parseCalendarDate(date.value) ? '' : '正しい日付を入力してください。');
+    time.setCustomValidity(!time.value || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time.value) ? '' : '正しい時刻を入力してください。');
+    let endMessage = !endDate.value ? '' : !parseCalendarDate(endDate.value) ? '正しい終了日を入力してください。' : endDate.value < date.value ? '終了日は開始日以降にしてください。' : '';
+    // 繰り返す予定は、次の回と重ならない長さに限る（例: 毎週なら7日以内）。
+    if (!endMessage && parseCalendarDate(date.value)) endMessage = eventRepeatSpanError(repeatValue, scheduleDayDiff(date.value, endDate.value || date.value));
+    endDate.setCustomValidity(endMessage);
+    const untilUsed = repeatValue !== 'none' && repeatUntil.value;
+    repeatUntil.setCustomValidity(!untilUsed ? '' : !parseCalendarDate(repeatUntil.value) ? '正しい繰り返しの終了日を入力してください。' : repeatUntil.value < date.value ? '繰り返しの終了日は開始日以降にしてください。' : '');
     return form.reportValidity();
   }
 
-  function editCalendarEvent(id) {
+  // 入力欄の値から、保存する予定の項目を作る。
+  function eventFieldsFrom(fields) {
+    const date = fields.date.value, repeat = fields.repeat.value || 'none';
+    return {
+      title: fields.title.value.trim(), date, endDate: fields.endDate.value || date, time: fields.time.value,
+      repeat, repeatUntil: repeat === 'none' ? '' : fields.repeatUntil.value
+    };
+  }
+
+  function editCalendarEvent(id, occurrenceStart = '') {
     const item = data.events.find(event => String(event.id) === String(id));
     if (!item) return;
+    const repeating = eventRepeat(item) !== 'none';
+    // 繰り返し予定をカレンダーの特定の日から開いた場合は、その回だけを消す選択肢も出す。
+    const occurrence = repeating && parseCalendarDate(occurrenceStart) && eventStartsOn(item, occurrenceStart) ? occurrenceStart : '';
+    const deleteZone = occurrence ?
+      `<p>${esc(occurrence)} の回だけを消すか、すべての回を消すかを選べます。どちらも次の確認画面で確定します。</p>
+        <div class="danger-actions"><button class="button danger" id="deleteEventOccurrence">この回だけ削除へ進む</button><button class="button danger" id="deleteCalendarEvent">すべての回を削除へ進む</button></div>` :
+      `<p>次の確認画面で削除を確定します。</p><button class="button danger" id="deleteCalendarEvent">${repeating ? 'すべての回を削除へ進む' : '削除へ進む'}</button>`;
     modal(`<h2 id="eventEditHeading">予定を編集</h2>
       <form id="editEventForm">
         <label for="editEventTitle">タイトル</label><input class="input" id="editEventTitle" maxlength="120" required value="${esc(item.title)}">
         <div class="modal-grid">
           <div><label for="editEventDate">開始日</label><input class="input" id="editEventDate" type="date" min="0001-01-01" max="9999-12-31" required value="${esc(item.date)}"></div>
-          <div><label for="editEventEndDate">終了日（空欄は同日）</label><input class="input" id="editEventEndDate" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(eventEndDate(item))}"></div>
+          <div><label for="editEventEndDate">終了日（空欄は同日）</label><input class="input" id="editEventEndDate" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(eventEndKey(item))}"></div>
           <div><label for="editEventTime">開始時刻（空欄は終日）</label><input class="input" id="editEventTime" type="time" value="${esc(item.time || '')}"></div>
+          <div><label for="editEventRepeat">繰り返し</label><select class="select" id="editEventRepeat">${selectOptions(EVENT_REPEAT_OPTIONS, eventRepeat(item))}</select></div>
+          <div><label for="editEventRepeatUntil">繰り返しの終了日（空欄は無期限）</label><input class="input" id="editEventRepeatUntil" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(item.repeatUntil || '')}" ${repeating ? '' : 'disabled'}></div>
         </div>
-        <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。</p>
+        <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。${repeating ? '繰り返し予定の変更は、すべての回に反映されます。' : ''}</p>
         <div class="modal-actions"><button class="button dim" type="button" id="cancelEventEdit">キャンセル</button><button class="button" type="submit">保存</button></div>
       </form>
-      <div class="danger-zone"><p>次の確認画面で削除を確定します。</p><button class="button danger" id="deleteCalendarEvent">削除へ進む</button></div>`);
+      <div class="danger-zone">${deleteZone}</div>`);
     const form = document.querySelector('#editEventForm');
-    const titleInput = document.querySelector('#editEventTitle');
-    const dateInput = document.querySelector('#editEventDate');
-    const endDateInput = document.querySelector('#editEventEndDate');
-    const timeInput = document.querySelector('#editEventTime');
+    const fields = {
+      title: document.querySelector('#editEventTitle'), date: document.querySelector('#editEventDate'),
+      endDate: document.querySelector('#editEventEndDate'), time: document.querySelector('#editEventTime'),
+      repeat: document.querySelector('#editEventRepeat'), repeatUntil: document.querySelector('#editEventRepeatUntil')
+    };
     let previousStart = item.date;
-    [titleInput, endDateInput, timeInput].forEach(input => input.oninput = () => input.setCustomValidity(''));
-    dateInput.oninput = () => {
-      dateInput.setCustomValidity('');
-      if (parseCalendarDate(dateInput.value)) {
-        endDateInput.value = shiftEventRange(previousStart, endDateInput.value, dateInput.value);
-        endDateInput.min = dateInput.value;
-        endDateInput.setCustomValidity('');
-        previousStart = dateInput.value;
+    [fields.title, fields.endDate, fields.time, fields.repeatUntil].forEach(input => input.oninput = () => input.setCustomValidity(''));
+    fields.repeat.onchange = () => {
+      fields.endDate.setCustomValidity('');
+      fields.repeatUntil.disabled = fields.repeat.value === 'none';
+    };
+    fields.date.oninput = () => {
+      fields.date.setCustomValidity('');
+      if (parseCalendarDate(fields.date.value)) {
+        fields.endDate.value = shiftEventRange(previousStart, fields.endDate.value, fields.date.value);
+        fields.endDate.min = fields.date.value;
+        fields.repeatUntil.min = fields.date.value;
+        fields.endDate.setCustomValidity('');
+        previousStart = fields.date.value;
       }
     };
     document.querySelector('#cancelEventEdit').onclick = closeModal;
     form.onsubmit = event => {
       event.preventDefault();
-      if (!validateEventForm(form, titleInput, dateInput, timeInput, endDateInput)) return;
-      item.title = titleInput.value.trim();
-      item.date = dateInput.value;
-      item.endDate = endDateInput.value || item.date;
-      item.time = timeInput.value;
+      if (!validateEventForm(form, fields)) return;
+      const next = eventFieldsFrom(fields);
+      // 開始日や繰り返し方が変わると、「この回だけ削除」した日が別の回を指してしまうため解除する。
+      const keepExceptions = next.repeat !== 'none' && next.date === item.date && next.repeat === eventRepeat(item);
+      Object.assign(item, next, { exceptions: keepExceptions ? (item.exceptions || []) : [] });
       save();
       closeModal();
-      selectCalendarDay(item.date);
+      // 繰り返し予定は、開いていた回の近くに表示を残す（開始日まで何か月も戻らないように）。
+      const anchor = occurrence || item.date;
+      const upcoming = occurrence ? eventOccurrencesBetween(item, anchor, scheduleAddDays(anchor, 400) || '9999-12-31')[0] : null;
+      selectCalendarDay(upcoming ? (upcoming.start < anchor ? anchor : upcoming.start) : item.date);
     };
-    document.querySelector('#deleteCalendarEvent').onclick = () => confirmDelete('この予定を完全に削除しますか？', () => {
+    document.querySelector('#deleteCalendarEvent').onclick = () => confirmDelete(repeating ? 'この予定のすべての回を完全に削除しますか？' : 'この予定を完全に削除しますか？', () => {
       data.events = data.events.filter(event => event !== item);
       save(); closeModal(); render();
     });
-    titleInput.focus();
+    if (occurrence) document.querySelector('#deleteEventOccurrence').onclick = () => confirmDelete(`${occurrence} の回だけを削除しますか？ほかの回は残ります。`, () => {
+      item.exceptions = [...new Set([...(item.exceptions || []), occurrence])].sort();
+      save(); closeModal(); selectCalendarDay(occurrence);
+    });
+    fields.title.focus();
   }
 
   calendar = function () {
@@ -486,26 +522,35 @@
     end.setMonth(end.getMonth() + 1, 0);
     const start = first.getDay(), days = end.getDate();
     const firstKey = calendarDateKey(first), lastKey = calendarDateKey(end);
-    const events = data.events.slice().sort(compareEvents);
-    const monthEvents = events.filter(event => event.date <= lastKey && eventEndDate(event) >= firstKey);
+    // この月に1日でも重なる予定と、その月の中の各回。繰り返し予定は回ごとに展開する。
+    const monthSeries = data.events.map(event => ({ event, occurrences: eventOccurrencesBetween(event, firstKey, lastKey) })).filter(item => item.occurrences.length);
+    const occurrencesOn = key => monthSeries.flatMap(({ event, occurrences }) => occurrences.filter(occurrence => occurrence.start <= key && key <= occurrence.end).map(occurrence => ({ event, occurrence }))).sort(compareOccurrences);
     const dueTasks = data.tasks.filter(task => !task.done && (task.due || '').startsWith(monthKey + '-'));
-    const selectedEvents = monthEvents.filter(event => eventIncludesDay(event, selectedDay));
+    const selectedEvents = occurrencesOn(selectedDay);
     const selectedTasks = dueTasks.filter(task => task.due === selectedDay);
     const phaseLabel = { single: '', start: '開始', middle: '期間中', end: '終了' };
-    const eventTime = (event, key) => ['single', 'start'].includes(eventPhase(event, key)) ? event.time || '終日' : phaseLabel[eventPhase(event, key)];
-    const eventDetails = event => eventEndDate(event) !== event.date ? `<small class="event-range-label">${esc(eventRangeLabel(event))} · ${event.time ? `開始 ${esc(event.time)}` : '終日'}</small>` : '';
+    const timeLabel = ({ event, occurrence }, key) => ['single', 'start'].includes(occurrencePhase(occurrence, key)) ? event.time || '終日' : phaseLabel[occurrencePhase(occurrence, key)];
+    const details = ({ event, occurrence }, extra = '') => {
+      const parts = [];
+      if (occurrence.start !== occurrence.end) parts.push(`${rangeLabel(occurrence)} · ${event.time ? `開始 ${event.time}` : '終日'}`);
+      if (eventRepeat(event) !== 'none') parts.push(`↻ ${eventRepeatLabel(event)}`);
+      if (extra) parts.push(extra);
+      return parts.length ? `<small class="event-range-label">${parts.map(esc).join(' · ')}</small>` : '';
+    };
+    const editButton = ({ event, occurrence }) => `<button class="ghost" data-event-edit="${esc(event.id)}" data-event-date="${esc(occurrence.start)}" aria-label="${esc(event.title)}を編集">編集</button>`;
     const cells = ['日','月','火','水','木','金','土'].map(day => `<div class="dayname">${day}</div>`);
     for (let index = 0; index < start; index++) cells.push('<div class="day day-outside" aria-hidden="true"></div>');
     for (let day = 1; day <= days; day++) {
       const key = `${monthKey}-${String(day).padStart(2, '0')}`;
-      const dayEvents = monthEvents.filter(event => eventIncludesDay(event, key));
+      const dayEvents = occurrencesOn(key);
       const dayTasks = dueTasks.filter(task => task.due === key);
-      const dayItems = dayEvents.map(event => {
-        const phase = eventPhase(event, key), multiDay = phase !== 'single';
-        const fullLabel = `${eventRangeLabel(event)} ${event.time ? `開始 ${event.time}` : '終日'} ${phaseLabel[phase]} ${event.title}`;
+      const dayItems = dayEvents.map(({ event, occurrence }) => {
+        const phase = occurrencePhase(occurrence, key), multiDay = phase !== 'single';
+        const repeatText = eventRepeatLabel(event);
+        const fullLabel = [rangeLabel(occurrence), event.time ? `開始 ${event.time}` : '終日', phaseLabel[phase], repeatText, event.title].filter(Boolean).join(' ');
         return {
           kind: multiDay ? 'range' : 'event',
-          html: `<button type="button" class="event calendar-event event-range-${phase} ${multiDay ? 'is-multi-day' : ''}" data-event-edit="${esc(event.id)}" title="${esc(fullLabel)}" aria-label="${esc(fullLabel)}を編集">${multiDay ? `<span class="event-phase">${phaseLabel[phase]}</span>` : ''}<span class="calendar-event-title">${['single', 'start'].includes(phase) ? esc(event.time || '終日') + ' ' : ''}${esc(event.title)}</span></button>`
+          html: `<button type="button" class="event calendar-event event-range-${phase} ${multiDay ? 'is-multi-day' : ''}" data-event-edit="${esc(event.id)}" data-event-date="${esc(occurrence.start)}" title="${esc(fullLabel)}" aria-label="${esc(fullLabel)}を編集">${multiDay ? `<span class="event-phase">${phaseLabel[phase]}</span>` : ''}<span class="calendar-event-title">${['single', 'start'].includes(phase) ? esc(event.time || '終日') + ' ' : ''}${repeatText ? '<span class="event-repeat-mark" aria-hidden="true">↻</span>' : ''}${esc(event.title)}</span></button>`
         };
       }).concat(dayTasks.map(task => ({
         kind: 'task',
@@ -519,6 +564,12 @@
       </div>`);
     }
     for (let index = (start + days) % 7; index > 0 && index < 7; index++) cells.push('<div class="day day-outside" aria-hidden="true"></div>');
+    // この月の予定一覧は、繰り返し予定も1件にまとめ、この月の最初の回の日付と回数を表示する。
+    const monthRows = monthSeries.map(({ event, occurrences }) => ({
+      event, occurrence: occurrences[0], count: occurrences.length,
+      visibleDate: occurrences[0].start < firstKey ? firstKey : occurrences[0].start
+    })).sort((a, b) => a.visibleDate.localeCompare(b.visibleDate) || compareOccurrences(a, b));
+    const optionSummary = [eventDraft.repeat !== 'none' ? EVENT_REPEAT_OPTIONS.find(([value]) => value === eventDraft.repeat)?.[1] : ''].filter(Boolean).join('・');
     return `<main class="page calendar-page">
       <div class="page-head"><h1 class="title" aria-live="polite">${year}年 ${currentMonth + 1}月</h1><div class="calendar-navigation"><button class="ghost" id="prevMonth" aria-label="前の月" ${year === 1 && currentMonth === 0 ? 'disabled' : ''}>←</button><button class="ghost" id="todayMonth">今日</button><button class="ghost" id="nextMonth" aria-label="次の月" ${year === 9999 && currentMonth === 11 ? 'disabled' : ''}>→</button></div></div>
       <form class="toolbar calendar-form" id="eventForm">
@@ -527,19 +578,23 @@
         <div class="field"><label for="eventTime">開始時刻（空欄は終日）</label><input class="select" id="eventTime" type="time" value="${esc(eventDraft.time)}"></div>
         <div class="field calendar-title-field"><label for="eventTitle">タイトル</label><input class="input" id="eventTitle" maxlength="120" required placeholder="新しい予定" value="${esc(eventDraft.title)}"></div>
         <button class="button" type="submit">予定を追加</button>
+        <details class="calendar-options" id="eventOptions" ${eventOptionsOpen || optionSummary ? 'open' : ''}>
+          <summary>繰り返し${optionSummary ? `<span class="calendar-options-summary">${esc(optionSummary)}</span>` : ''}</summary>
+          <div class="calendar-options-grid">
+            <div class="field"><label for="eventRepeat">繰り返し</label><select class="select" id="eventRepeat">${selectOptions(EVENT_REPEAT_OPTIONS, eventDraft.repeat)}</select></div>
+            <div class="field"><label for="eventRepeatUntil">繰り返しの終了日（空欄は無期限）</label><input class="select" id="eventRepeatUntil" type="date" min="${esc(eventDraft.date)}" max="9999-12-31" value="${esc(eventDraft.repeatUntil)}" ${eventDraft.repeat === 'none' ? 'disabled' : ''}></div>
+          </div>
+        </details>
       </form>
       <p class="calendar-period-hint">開始日〜終了日をまとめて登録。日付を選ぶと下に予定を表示します。時刻は開始日のみに適用されます。</p>
       <section class="panel calendar-panel" aria-label="${year}年${currentMonth + 1}月のカレンダー"><div class="calendar">${cells.join('')}</div></section>
       <section class="panel calendar-agenda" aria-labelledby="selectedDayHeading"><h3 class="calendar-selection-heading" id="selectedDayHeading">${esc(selectedDay)} の予定 <span>${selectedEvents.length + selectedTasks.length}件</span></h3>
-        ${selectedEvents.map(event => `<div class="agenda-row"><time>${esc(eventTime(event, selectedDay))}</time><span class="agenda-event-copy"><span class="agenda-event-title">${esc(event.title)}</span>${eventDetails(event)}</span><button class="ghost" data-event-edit="${esc(event.id)}" aria-label="${esc(event.title)}を編集">編集</button></div>`).join('')}
+        ${selectedEvents.map(item => `<div class="agenda-row"><time>${esc(timeLabel(item, selectedDay))}</time><span class="agenda-event-copy"><span class="agenda-event-title">${esc(item.event.title)}</span>${details(item)}</span>${editButton(item)}</div>`).join('')}
         ${selectedTasks.map(task => `<div class="agenda-row"><time class="tag">期限</time><span>${esc(task.title)}</span><button class="ghost" data-calendar-task="${esc(task.id)}" aria-label="タスク ${esc(task.title)}を編集">タスクを編集</button></div>`).join('')}
         ${selectedEvents.length || selectedTasks.length ? '' : '<div class="empty">この日の予定・タスク期限はありません</div>'}
       </section>
-      <section class="panel calendar-agenda" aria-labelledby="monthAgendaHeading"><h3 id="monthAgendaHeading">この月の予定 · ${monthEvents.length}件</h3>
-        ${monthEvents.map(event => {
-          const visibleDate = event.date < firstKey ? firstKey : event.date;
-          return `<div class="agenda-row month-agenda-row"><button class="ghost agenda-date" data-calendar-select="${esc(visibleDate)}" aria-label="${esc(visibleDate)}の予定を表示、予定期間 ${esc(eventRangeLabel(event))}">${esc(visibleDate.slice(5))}</button><time>${esc(eventTime(event, visibleDate))}</time><span class="agenda-event-copy"><span class="agenda-event-title">${esc(event.title)}</span>${eventDetails(event)}</span><button class="ghost" data-event-edit="${esc(event.id)}" aria-label="${esc(event.title)}を編集">編集</button></div>`;
-        }).join('') || '<div class="empty">この月の予定はありません</div>'}
+      <section class="panel calendar-agenda" aria-labelledby="monthAgendaHeading"><h3 id="monthAgendaHeading">この月の予定 · ${monthRows.length}件</h3>
+        ${monthRows.map(row => `<div class="agenda-row month-agenda-row"><button class="ghost agenda-date" data-calendar-select="${esc(row.visibleDate)}" aria-label="${esc(row.visibleDate)}の予定を表示、予定期間 ${esc(rangeLabel(row.occurrence))}">${esc(row.visibleDate.slice(5))}</button><time>${esc(timeLabel(row, row.visibleDate))}</time><span class="agenda-event-copy"><span class="agenda-event-title">${esc(row.event.title)}</span>${details(row, eventRepeat(row.event) !== 'none' ? `この月${row.count}回` : '')}</span>${editButton(row)}</div>`).join('') || '<div class="empty">この月の予定はありません</div>'}
       </section>
     </main>`;
   };
@@ -673,46 +728,55 @@
       });
       document.querySelectorAll('[data-event-edit]').forEach(button => button.onclick = () => {
         rememberEventDraft();
-        editCalendarEvent(button.dataset.eventEdit);
+        editCalendarEvent(button.dataset.eventEdit, button.dataset.eventDate);
       });
       document.querySelectorAll('[data-calendar-task]').forEach(button => button.onclick = () => {
         rememberEventDraft();
         editTask(button.dataset.calendarTask);
       });
       const form = document.querySelector('#eventForm');
-      const titleInput = document.querySelector('#eventTitle');
-      const dateInput = document.querySelector('#eventDate');
-      const endDateInput = document.querySelector('#eventEndDate');
-      const timeInput = document.querySelector('#eventTime');
-      [titleInput, endDateInput, timeInput].forEach(input => input.oninput = () => {
+      const fields = {
+        title: document.querySelector('#eventTitle'), date: document.querySelector('#eventDate'),
+        endDate: document.querySelector('#eventEndDate'), time: document.querySelector('#eventTime'),
+        repeat: document.querySelector('#eventRepeat'), repeatUntil: document.querySelector('#eventRepeatUntil')
+      };
+      [fields.title, fields.endDate, fields.time, fields.repeatUntil].forEach(input => input.oninput = () => {
         input.setCustomValidity('');
         rememberEventDraft();
       });
-      dateInput.oninput = () => {
-        dateInput.setCustomValidity('');
-        if (parseCalendarDate(dateInput.value)) {
-          shiftEventDraftStart(dateInput.value);
-          endDateInput.value = eventDraft.endDate;
-          endDateInput.min = dateInput.value;
-          endDateInput.setCustomValidity('');
+      fields.repeat.onchange = () => {
+        fields.endDate.setCustomValidity('');
+        fields.repeatUntil.disabled = fields.repeat.value === 'none';
+        rememberEventDraft();
+      };
+      const options = document.querySelector('#eventOptions');
+      options.ontoggle = () => { eventOptionsOpen = Boolean(options.open); };
+      fields.date.oninput = () => {
+        fields.date.setCustomValidity('');
+        if (parseCalendarDate(fields.date.value)) {
+          shiftEventDraftStart(fields.date.value);
+          fields.endDate.value = eventDraft.endDate;
+          fields.endDate.min = fields.date.value;
+          fields.repeatUntil.min = fields.date.value;
+          fields.endDate.setCustomValidity('');
         }
         rememberEventDraft();
       };
-      dateInput.onchange = () => {
+      fields.date.onchange = () => {
         rememberEventDraft();
-        if (parseCalendarDate(dateInput.value)) selectCalendarDay(dateInput.value);
+        if (parseCalendarDate(fields.date.value)) selectCalendarDay(fields.date.value);
       };
-      document.querySelector('#eventForm').onsubmit = event => {
+      form.onsubmit = event => {
         event.preventDefault();
-        if (!validateEventForm(form, titleInput, dateInput, timeInput, endDateInput)) return;
-        const date = dateInput.value;
+        if (!validateEventForm(form, fields)) return;
+        const next = eventFieldsFrom(fields);
         data.events.push({
           id: globalThis.crypto?.randomUUID?.() || `event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          date, endDate: endDateInput.value || date, time: timeInput.value, title: titleInput.value.trim()
+          ...next, exceptions: []
         });
-        eventDraft = { date, endDate: date, time: '', title: '' };
+        eventDraft = { date: next.date, endDate: next.date, time: '', title: '', ...emptyEventOptions() };
         save();
-        selectCalendarDay(date);
+        selectCalendarDay(next.date);
         document.querySelector('#eventTitle').focus();
       };
     }

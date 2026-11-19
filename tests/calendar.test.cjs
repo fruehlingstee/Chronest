@@ -19,6 +19,12 @@ function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = []
       const id = tag[0].match(/\bid="([^"]+)"/);
       if (id) nodes.set('#' + id[1], node(unescape(tag[0].match(/\bvalue="([^"]*)"/)?.[1] || '')));
     }
+    // 選択欄は selected の付いた選択肢（無ければ先頭）を値にする。実際のブラウザと同じ決まり方。
+    for (const select of html.matchAll(/<select\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
+      const options = [...select[2].matchAll(/<option value="([^"]*)"([^>]*)>/g)];
+      const chosen = options.find(option => /\bselected\b/.test(option[2])) || options[0];
+      nodes.set('#' + select[1], node(unescape(chosen ? chosen[1] : '')));
+    }
     buttons = [...html.matchAll(/<button\b[^>]*>/g)].map(match => {
       const item = node();
       for (const attribute of match[0].matchAll(/\bdata-([a-z-]+)="([^"]*)"/g)) {
@@ -63,8 +69,10 @@ function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = []
     }
   };
   const source = fs.readFileSync(path.join(__dirname, '..', 'enhancements.js'), 'utf8').replace(/\r\n/g, '\n');
-  const exposed = source.replace('  resetDailyTasks();\n  render();', `  globalThis.calendarTest = { parseCalendarDate, calendarDateKey, compareEvents, editCalendarEvent, getState: () => ({ selectedDay, eventDraft }) };\n  resetDailyTasks();\n  render();`);
+  const exposed = source.replace('  resetDailyTasks();\n  render();', `  globalThis.calendarTest = { parseCalendarDate, calendarDateKey, editCalendarEvent, checkReminders, getState: () => ({ selectedDay, eventDraft }) };\n  resetDailyTasks();\n  render();`);
   assert.notEqual(exposed, source, 'カレンダーのテスト用関数を公開できること');
+  // 予定の日付計算（schedule.js）を先に読み込む。ブラウザでの読み込み順と同じ。
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'schedule.js'), 'utf8'), context);
   vm.runInNewContext(exposed, context);
   return { context, nodes, submit: () => nodes.get('#eventForm').onsubmit({ preventDefault() {} }) };
 }
@@ -339,4 +347,140 @@ test('日付セルの表示上限を超えた予定も選択日の一覧で全�
   context.document.querySelector('[data-calendar-select="2026-01-31"]').onclick();
   const agenda = context.html.split('aria-labelledby="selectedDayHeading"')[1].split('</section>')[0];
   assert.equal((agenda.match(/data-event-edit=/g) || []).length, 5);
+});
+
+function selectedAgenda(html) {
+  return html.split('aria-labelledby="selectedDayHeading"')[1].split('</section>')[0];
+}
+
+test('毎週の予定を作成すると各週に表示され、月一覧では1件にまとまる', () => {
+  const { context, nodes, submit } = calendarHarness({ date: '2026-11-19T12:00:00' });
+  nodes.get('#eventDate').value = '2026-11-03';
+  nodes.get('#eventEndDate').value = '';
+  nodes.get('#eventRepeat').value = 'weekly';
+  nodes.get('#eventTitle').value = '週次ミーティング';
+  nodes.get('#eventTime').value = '10:00';
+  submit();
+  assert.equal(context.data.events.length, 1);
+  const event = context.data.events[0];
+  assert.equal(event.repeat, 'weekly');
+  assert.equal(event.repeatUntil, '');
+  for (const day of ['03', '10', '17', '24']) assert.match(calendarDay(context.html, '2026-11-' + day), new RegExp(`data-event-edit="${event.id}" data-event-date="2026-11-${day}"`));
+  for (const day of ['02', '04', '11']) assert.doesNotMatch(calendarDay(context.html, '2026-11-' + day), new RegExp(`data-event-edit="${event.id}"`));
+  const agenda = monthAgenda(context.html);
+  assert.equal((agenda.match(new RegExp(`data-event-edit="${event.id}"`, 'g')) || []).length, 1);
+  assert.match(agenda, /毎週火曜/);
+  assert.match(agenda, /この月4回/);
+  assert.equal(nodes.get('#eventRepeat').value, 'none', '追加後は繰り返しを初期値に戻す');
+  nodes.get('#nextMonth').onclick();
+  for (const day of ['01', '08', '15', '22', '29']) assert.match(calendarDay(context.html, '2026-12-' + day), new RegExp(`data-event-edit="${event.id}"`));
+});
+
+test('繰り返しの終了日を過ぎた回と開始日より前は表示しない', () => {
+  const events = [{ id: 'until', date: '2026-11-05', endDate: '2026-11-05', title: '期間限定', time: '', repeat: 'daily', repeatUntil: '2026-11-07', exceptions: [] }];
+  const { context } = calendarHarness({ date: '2026-11-19T12:00:00', events });
+  for (const day of ['05', '06', '07']) assert.match(calendarDay(context.html, '2026-11-' + day), /data-event-edit="until"/);
+  for (const day of ['04', '08']) assert.doesNotMatch(calendarDay(context.html, '2026-11-' + day), /data-event-edit="until"/);
+});
+
+test('繰り返し予定は選んだ回だけ削除でき、ほかの回は残る', () => {
+  const events = [{ id: 'weekly', date: '2026-11-03', endDate: '2026-11-03', title: '授業', time: '09:00', repeat: 'weekly', repeatUntil: '', exceptions: [] }];
+  const { context, nodes } = calendarHarness({ date: '2026-11-19T12:00:00', events });
+  context.calendarTest.editCalendarEvent('weekly', '2026-11-10');
+  assert.ok(nodes.get('#deleteEventOccurrence'), 'この回だけ削除のボタンがある');
+  nodes.get('#deleteEventOccurrence').onclick();
+  assert.match(context.deleteMessage, /2026-11-10 の回だけ/);
+  assert.deepEqual(context.data.events[0].exceptions, [], '確認前は消さない');
+  context.acceptDelete();
+  assert.deepEqual([...context.data.events[0].exceptions], ['2026-11-10']);
+  assert.doesNotMatch(calendarDay(context.html, '2026-11-10'), /data-event-edit="weekly"/);
+  assert.match(calendarDay(context.html, '2026-11-17'), /data-event-edit="weekly"/);
+  assert.equal(context.calendarTest.getState().selectedDay, '2026-11-10');
+  // カレンダー上の回のボタンから開くと、その回の日付が編集画面に渡る。
+  context.document.querySelector('[data-event-edit="weekly"]').onclick();
+  nodes.get('#deleteCalendarEvent').onclick();
+  assert.match(context.deleteMessage, /すべての回/);
+  context.acceptDelete();
+  assert.equal(context.data.events.length, 0);
+});
+
+test('繰り返さない予定の編集画面には「この回だけ削除」を出さない', () => {
+  const { context, nodes } = calendarHarness({ events: [{ id: 'single', date: '2026-01-31', endDate: '2026-01-31', title: '単発', time: '' }] });
+  nodes.delete('#deleteEventOccurrence');
+  context.calendarTest.editCalendarEvent('single', '2026-01-31');
+  assert.equal(nodes.has('#deleteEventOccurrence'), false);
+  nodes.get('#deleteCalendarEvent').onclick();
+  assert.equal(context.deleteMessage, 'この予定を完全に削除しますか？');
+});
+
+test('次の回と重なる長さの繰り返しや、開始日より前の繰り返し終了日は保存しない', () => {
+  const { context, nodes, submit } = calendarHarness({ date: '2026-11-19T12:00:00' });
+  nodes.get('#eventDate').value = '2026-11-02';
+  nodes.get('#eventEndDate').value = '2026-11-09';
+  nodes.get('#eventRepeat').value = 'weekly';
+  nodes.get('#eventTitle').value = '長すぎる週次予定';
+  submit();
+  assert.equal(context.data.events.length, 0);
+  assert.equal(nodes.get('#eventEndDate').validationMessage, '毎週繰り返す予定は7日以内にしてください。');
+  nodes.get('#eventEndDate').value = '2026-11-08';
+  nodes.get('#eventRepeatUntil').value = '2026-11-01';
+  submit();
+  assert.equal(context.data.events.length, 0);
+  assert.equal(nodes.get('#eventRepeatUntil').validationMessage, '繰り返しの終了日は開始日以降にしてください。');
+  nodes.get('#eventRepeatUntil').value = '2026-12-31';
+  submit();
+  assert.equal(context.data.events.length, 1);
+  assert.equal(context.data.events[0].endDate, '2026-11-08');
+  assert.equal(context.data.events[0].repeatUntil, '2026-12-31');
+});
+
+test('繰り返し予定を編集すると全回に反映され、開始日を変えると「この回だけ削除」を解除する', () => {
+  const events = [{ id: 'series', date: '2026-11-03', endDate: '2026-11-03', title: '変更前', time: '', repeat: 'weekly', repeatUntil: '', exceptions: ['2026-11-10'] }];
+  const { context, nodes } = calendarHarness({ date: '2026-11-19T12:00:00', events });
+  context.calendarTest.editCalendarEvent('series', '2026-11-17');
+  nodes.get('#editEventTitle').value = '変更後';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(context.data.events[0].title, '変更後');
+  assert.deepEqual([...context.data.events[0].exceptions], ['2026-11-10'], 'タイトルだけの変更では残す');
+  assert.equal(context.calendarTest.getState().selectedDay, '2026-11-17', '開いていた回の日付に留まる');
+  context.calendarTest.editCalendarEvent('series', '2026-11-17');
+  nodes.get('#editEventDate').value = '2026-11-04';
+  nodes.get('#editEventEndDate').value = '2026-11-04';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.deepEqual([...context.data.events[0].exceptions], []);
+  assert.match(calendarDay(context.html, '2026-11-11'), /data-event-edit="series"/);
+  assert.equal(context.calendarTest.getState().selectedDay, '2026-11-18', '変更後の次の回へ移る');
+  context.calendarTest.editCalendarEvent('series', '2026-11-18');
+  nodes.get('#editEventRepeat').value = 'none';
+  nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
+  assert.equal(context.data.events[0].repeat, 'none');
+  assert.equal(context.data.events[0].repeatUntil, '');
+  assert.doesNotMatch(calendarDay(context.html, '2026-11-11'), /data-event-edit="series"/);
+});
+
+test('入力途中の繰り返し設定は月を移動しても保持される', () => {
+  const { context, nodes } = calendarHarness();
+  nodes.get('#eventRepeat').value = 'monthly';
+  nodes.get('#eventRepeat').onchange();
+  nodes.get('#eventRepeatUntil').value = '2026-12-31';
+  nodes.get('#eventRepeatUntil').oninput();
+  nodes.get('#nextMonth').onclick();
+  assert.equal(nodes.get('#eventRepeat').value, 'monthly');
+  assert.equal(nodes.get('#eventRepeatUntil').value, '2026-12-31');
+  assert.match(context.html, /<details class="calendar-options" id="eventOptions" open>/);
+  assert.match(context.html, /calendar-options-summary">毎月</);
+});
+
+test('選択日の一覧では、前日から続く期間の回を先に、その後を時刻順に並べる', () => {
+  const events = [
+    { id: 'later', date: '2026-01-31', endDate: '2026-01-31', title: '午後', time: '15:00' },
+    { id: 'weekly-range', date: '2026-01-23', endDate: '2026-01-24', title: '週末', time: '18:00', repeat: 'weekly', repeatUntil: '', exceptions: [] },
+    { id: 'morning', date: '2026-01-31', endDate: '2026-01-31', title: '朝', time: '08:00' }
+  ];
+  const { context } = calendarHarness({ events });
+  const agenda = selectedAgenda(context.html);
+  const order = ['weekly-range', 'morning', 'later'].map(id => agenda.indexOf(`data-event-edit="${id}"`));
+  assert.ok(order.every(index => index >= 0));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.match(agenda, /期間中|終了/);
 });

@@ -50,6 +50,7 @@ function createApp({ stored, blockedStorage = false, failWrites = false, now = '
     clearInterval(id) { timers.delete(id); }
   });
   context.window = context;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'schedule.js'), 'utf8'), context, { filename: 'schedule.js' });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8'), context, { filename: 'app.js' });
   return {
     run: code => vm.runInContext(code, context),
@@ -178,6 +179,53 @@ test('TODAY includes the first, middle and last dates of a range exactly once', 
       assert.doesNotMatch(html, /期間の予定/);
       assert.doesNotMatch(html, /今日の予定 1 件/);
     }
+  }
+});
+
+test('repeating events keep their schedule, end date and skipped dates through save and reload', () => {
+  const original = JSON.stringify({ tasks: [], notes: [], events: [
+    { id: 'weekly', title: '授業', date: '2026-11-03', endDate: '2026-11-03', time: '09:00', repeat: 'weekly', repeatUntil: '2027-01-31', exceptions: ['2026-11-17', '2026-11-10', '2026-11-10'] },
+    { id: 'legacy', title: '旧形式', date: '2026-11-20' }
+  ] });
+  const app = createApp({ stored: original });
+  assert.equal(app.run('data.events[0].repeat'), 'weekly');
+  assert.equal(app.run('data.events[0].repeatUntil'), '2027-01-31');
+  assert.equal(app.run('JSON.stringify(data.events[0].exceptions)'), '["2026-11-10","2026-11-17"]', '重複を除き日付順にする');
+  assert.equal(app.run('data.events[1].repeat'), 'none');
+  assert.equal(app.run('JSON.stringify(data.events[1].exceptions)'), '[]');
+  assert.equal([...app.storage.keys()].some(key => key.startsWith('dayflow-v2-recovery-')), false, '正しいデータは復旧扱いにしない');
+  app.run('save()');
+  const reloaded = createApp({ stored: app.storage.get('dayflow-v2') });
+  assert.equal(reloaded.run('data.events[0].repeatUntil'), '2027-01-31');
+  assert.equal(reloaded.run('data.events[0].exceptions.length'), 2);
+});
+
+test('invalid repeat settings are rejected as a backup and recovered without overlapping occurrences', () => {
+  const cases = [
+    [{ repeat: 'hourly' }, { repeat: 'none', endDate: '2026-11-03' }],
+    [{ repeat: 'weekly', endDate: '2026-11-12' }, { repeat: 'none', endDate: '2026-11-12' }],
+    [{ repeat: 'weekly', repeatUntil: '2026-11-01' }, { repeat: 'weekly', repeatUntil: '' }],
+    [{ repeat: 'daily', exceptions: ['2026-02-30'] }, { repeat: 'daily', exceptions: '[]' }]
+  ];
+  for (const [fields, expected] of cases) {
+    const original = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'bad', title: '不正な繰り返し', date: '2026-11-03', endDate: '2026-11-03', ...fields }] });
+    const app = createApp({ stored: original });
+    assert.equal(app.run('data.events.length'), 1, JSON.stringify(fields));
+    for (const [key, value] of Object.entries(expected)) {
+      assert.equal(app.run(key === 'exceptions' ? 'JSON.stringify(data.events[0].exceptions)' : `data.events[0].${key}`), value, JSON.stringify(fields) + ' ' + key);
+    }
+    assert.equal(app.run('save()'), true);
+    const recovery = [...app.storage.entries()].find(([key]) => key.startsWith('dayflow-v2-recovery-'));
+    assert.equal(recovery[1], original, '元のデータを復旧用に残す');
+  }
+});
+
+test('TODAY shows a weekly event only on its repeating days and not on skipped dates', () => {
+  const stored = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'weekly', title: '毎週の授業', date: '2026-11-03', endDate: '2026-11-03', time: '10:40', repeat: 'weekly', repeatUntil: '', exceptions: ['2026-11-17'] }] });
+  for (const [day, shown] of [['03', true], ['10', true], ['11', false], ['17', false], ['24', true]]) {
+    const html = createApp({ stored, now: `2026-11-${day}T12:00:00` }).run('home()');
+    assert.equal(html.includes('毎週の授業'), shown, day);
+    if (shown) assert.match(html, /10:40/);
   }
 });
 

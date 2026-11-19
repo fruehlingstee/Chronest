@@ -7,15 +7,16 @@ function isDateKey(value) {
   return Number.isFinite(date.getTime()) && date.getFullYear() === Number(value.slice(0, 4)) && date.getMonth() + 1 === Number(value.slice(5, 7)) && date.getDate() === Number(value.slice(8, 10));
 }
 
+// 日付計算は schedule.js（先に読み込む）の共通関数を使う。繰り返し予定の各回にも対応する。
 function eventOccursOn(event, key) {
-  const end = isDateKey(event.endDate) && event.endDate >= event.date ? event.endDate : event.date;
-  return event.date <= key && key <= end;
+  return Boolean(eventOccurrenceOn(event, key));
 }
 
 function eventTimeLabel(event, key) {
-  if (!event.endDate || event.endDate <= event.date) return event.time || '終日';
-  if (key === event.date) return event.time ? `開始 ${event.time}` : '開始日';
-  return key === event.endDate ? '最終日' : '期間中';
+  const occurrence = eventOccurrenceOn(event, key);
+  if (!occurrence || occurrence.start === occurrence.end) return event.time || '終日';
+  if (key === occurrence.start) return event.time ? `開始 ${event.time}` : '開始日';
+  return key === occurrence.end ? '最終日' : '期間中';
 }
 
 function normalizeData(input, options = {}) {
@@ -53,6 +54,15 @@ function normalizeData(input, options = {}) {
   }
   const titleValid = item => typeof item.title === 'string' && Boolean(item.title.trim());
   const optionalDateValid = (item, key) => item[key] === undefined || item[key] === '' || isDateKey(item[key]);
+  const knownRepeat = value => Object.prototype.hasOwnProperty.call(EVENT_REPEAT_MAX_SPAN, value);
+  // 繰り返し予定の項目を検証する。項目が無い旧データは「繰り返しなし」として通す。
+  const eventRepeatValid = item => {
+    if (item.repeat !== undefined && !knownRepeat(item.repeat)) return false;
+    const end = isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date;
+    return !eventRepeatSpanError(item.repeat || 'none', scheduleDayDiff(item.date, end)) &&
+      (item.repeatUntil === undefined || item.repeatUntil === '' || (isDateKey(item.repeatUntil) && item.repeatUntil >= item.date)) &&
+      (item.exceptions === undefined || (Array.isArray(item.exceptions) && item.exceptions.every(isDateKey)));
+  };
   const normalizeSubtasks = items => {
     const seen = new Set();
     return (Array.isArray(items) ? items : []).filter(sub => object(sub) && titleValid(sub)).map(sub => {
@@ -84,12 +94,19 @@ function normalizeData(input, options = {}) {
     })),
     events: collection('events', true, item => titleValid(item) && isDateKey(item.date) && (!strict || (
       (item.endDate === undefined || item.endDate === '' || (isDateKey(item.endDate) && item.endDate >= item.date)) &&
-      (item.time === undefined || item.time === '' || Boolean(time(item.time)))
-    )), item => ({
-      id: id(item.id), title: item.title, date: item.date,
-      endDate: isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date,
-      time: time(item.time)
-    })),
+      (item.time === undefined || item.time === '' || Boolean(time(item.time))) &&
+      eventRepeatValid(item)
+    )), item => {
+      const endDate = isDateKey(item.endDate) && item.endDate >= item.date ? item.endDate : item.date;
+      let repeat = knownRepeat(item.repeat) ? item.repeat : 'none';
+      // 次の回と重なるほど長い繰り返しは、復旧時は繰り返しを外して1回分の予定として残す。
+      if (eventRepeatSpanError(repeat, scheduleDayDiff(item.date, endDate))) repeat = 'none';
+      return {
+        id: id(item.id), title: item.title, date: item.date, endDate, time: time(item.time), repeat,
+        repeatUntil: repeat !== 'none' && isDateKey(item.repeatUntil) && item.repeatUntil >= item.date ? item.repeatUntil : '',
+        exceptions: repeat !== 'none' && Array.isArray(item.exceptions) ? [...new Set(item.exceptions.filter(isDateKey))].sort() : []
+      };
+    }),
     notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created) })),
     sessions: collection('sessions', false, item => isDateKey(item.date) && typeof item.minutes === 'number' && Number.isFinite(item.minutes) && item.minutes > 0 && (!strict || optionalString(item, 'task')), item => ({ date: item.date, minutes: item.minutes, task: text(item.task) })),
     bookmarks: collection('bookmarks', false, item => typeof item.url === 'string' && Boolean(bookmarkUrl(item.url)) && (!strict || (optionalString(item, 'title') && (item.tags === undefined || (Array.isArray(item.tags) && item.tags.every(tag => typeof tag === 'string'))))), item => ({ id: id(item.id), title: text(item.title), url: bookmarkUrl(item.url), tags: (Array.isArray(item.tags) ? item.tags : []).filter(tag => typeof tag === 'string'), created: created(item.created) })),
