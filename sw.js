@@ -1,9 +1,11 @@
-// DAYFLOW の Service Worker（ブラウザとネットの間に入り、通信を中継する仕組み）。
+// Chronest の Service Worker（ブラウザとネットの間に入り、通信を中継する仕組み）。
 // 方針は「ネット優先、つながらないときは保存済みのファイル」。
 //  - オンラインでは毎回サーバーに更新を確認するので、古い画面が残りにくい（変更が無ければ短い応答で済む）。
 //  - オフラインや、4秒以上応答が無いときは、前回保存したファイルで画面を開く。
 // アプリのファイルを追加したら APP_FILES にも追加する（tests/sw.test.cjs が漏れを検出する）。
-const CACHE_NAME = 'dayflow-shell-v1';
+// 旧名（dayflow-）の保存領域も、有効化のときに片付ける。
+const CACHE_NAME = 'chronest-shell-v1';
+const OWN_CACHE_PREFIXES = ['chronest-', 'dayflow-'];
 const APP_FILES = [
   './', './index.html', './styles.css', './schedule.js', './app.js', './enhancements.js', './tools.js', './insights.js', './pages.js', './install.js',
   './vendor/qrcode.js', './manifest.webmanifest',
@@ -22,7 +24,7 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   // 以前の版の保存領域を消し、開いている画面もすぐにこの Service Worker の管理下に置く。
   event.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(key => key.startsWith('dayflow-') && key !== CACHE_NAME).map(key => caches.delete(key))))
+    .then(keys => Promise.all(keys.filter(key => OWN_CACHE_PREFIXES.some(prefix => key.startsWith(prefix)) && key !== CACHE_NAME).map(key => caches.delete(key))))
     .then(() => self.clients.claim()));
 });
 
@@ -64,7 +66,7 @@ async function networkFirst(event) {
   return Promise.race([fresh, slow]);
 }
 
-// 通知を押したら、開いているDAYFLOWを前面に出す。開いていなければ新しく開く。
+// 通知を押したら、開いているChronestを前面に出す。開いていなければ新しく開く。
 self.addEventListener('notificationclick', event => {
   event.notification.close();
   event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {

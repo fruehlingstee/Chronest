@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "DAYFLOW",
-  "short_name": "DAYFLOW",
+  "name": "Chronest",
+  "short_name": "Chronest",
   "description": "タスク、予定、メモと便利ツールをひとつに。",
   "lang": "ja",
   "start_url": "./",

@@ -511,7 +511,7 @@
           <div><label for="editEventReminder">通知</label><select class="select" id="editEventReminder">${selectOptions(EVENT_REMINDER_OPTIONS, eventReminderMinutes(item) ?? '')}</select></div>
           <div><label for="editEventColor">色</label><select class="select" id="editEventColor">${selectOptions(EVENT_COLOR_OPTIONS, eventColorChoice(item.color))}</select></div>
         </div>
-        <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。${repeating ? '繰り返し予定の変更は、すべての回に反映されます。' : ''}通知はDAYFLOWを開いている間に届き、終日の予定は当日9:00を基準にします。</p>
+        <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。${repeating ? '繰り返し予定の変更は、すべての回に反映されます。' : ''}通知はChronestを開いている間に届き、終日の予定は当日9:00を基準にします。</p>
         <div class="modal-actions"><button class="button dim" type="button" id="cancelEventEdit">キャンセル</button><button class="button" type="submit">保存</button></div>
       </form>
       <div class="danger-zone">${deleteZone}</div>`);
@@ -671,7 +671,7 @@
             <div class="field"><label for="eventReminder">通知</label><select class="select" id="eventReminder">${selectOptions(EVENT_REMINDER_OPTIONS, eventDraft.reminder)}</select></div>
             <div class="field"><label for="eventColor">色</label><select class="select" id="eventColor">${selectOptions(EVENT_COLOR_OPTIONS, eventDraft.color)}</select></div>
           </div>
-          <p class="calendar-options-hint">通知はDAYFLOWを開いている間に届きます。終日の予定は当日9:00を基準にします。</p>
+          <p class="calendar-options-hint">通知はChronestを開いている間に届きます。終日の予定は当日9:00を基準にします。</p>
         </details>
       </form>
       <p class="task-notice calendar-notice" role="status" ${calendarNotice ? '' : 'hidden'}>${esc(calendarNotice)}</p>
@@ -692,7 +692,7 @@
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const anchor = document.createElement('a');
     anchor.href = URL.createObjectURL(blob);
-    anchor.download = `dayflow-${todayKey()}.json`;
+    anchor.download = `chronest-${todayKey()}.json`;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
   }
@@ -712,7 +712,7 @@
           save(); closeModal(); render();
         };
       } catch {
-        alert('Dayflowのバックアップファイルではありません。');
+        alert('Chronestのバックアップファイルではありません。');
       }
     };
     reader.onerror = () => alert('バックアップファイルを読み込めませんでした。');

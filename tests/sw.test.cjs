@@ -70,7 +70,7 @@ function serviceWorkerHarness({ network = () => Promise.resolve(response('networ
     return { event, waits, response: result, settle: () => Promise.all(waits) };
   }
   const request = (file, mode = 'cors', method = 'GET') => ({ url: new URL(file, scope).href, mode, method });
-  return { context, stores, fetches, windows, dispatch, request, store: () => stores.get('dayflow-shell-v1') };
+  return { context, stores, fetches, windows, dispatch, request, store: () => stores.get('chronest-shell-v1') };
 }
 
 const appFiles = () => vm.runInNewContext(fs.readFileSync(path.join(root, 'sw.js'), 'utf8') + '\nAPP_FILES', {
@@ -96,11 +96,12 @@ test('インストール時にアプリのファイルを最新で保存し、�
   assert.equal(harness.store().entries.size, appFiles().length);
   assert.ok(harness.fetches.every(request => request.cache === 'reload'), 'ブラウザの一時保存ではなくサーバーから取り直す');
   assert.equal(harness.context.skipped, true);
-  await harness.context.caches.open('dayflow-shell-v0');
+  await harness.context.caches.open('dayflow-shell-v1');
+  await harness.context.caches.open('chronest-shell-v0');
   await harness.context.caches.open('other-app');
   const activate = await harness.dispatch('activate');
   await activate.settle();
-  assert.deepEqual([...harness.stores.keys()].sort(), ['dayflow-shell-v1', 'other-app']);
+  assert.deepEqual([...harness.stores.keys()].sort(), ['chronest-shell-v1', 'other-app'], '旧名（dayflow-）と古い版の保存領域を消す');
   assert.equal(harness.context.claimed, true);
 });
 
@@ -116,7 +117,7 @@ test('オンラインでは毎回サーバーに確認して最新を返し、?v
 
 test('オフラインでは保存済みのファイルを返し、ページの移動は最初の画面で開く', async () => {
   const harness = serviceWorkerHarness({ network: () => Promise.reject(new TypeError('offline')) });
-  const store = await harness.context.caches.open('dayflow-shell-v1');
+  const store = await harness.context.caches.open('chronest-shell-v1');
   await store.put(scope + 'app.js', response('保存済みapp.js'));
   await store.put(scope, response('保存済みindex'));
   assert.equal((await harness.dispatch('fetch', { request: harness.request('app.js?v=3') })).response.body, '保存済みapp.js');
@@ -127,7 +128,7 @@ test('オフラインでは保存済みのファイルを返し、ページの�
 test('サーバーの不調では保存済みを使い、存在しないファイルや転送はサーバーの答えを返す', async () => {
   let answer = response('', { status: 503 });
   const harness = serviceWorkerHarness({ network: () => Promise.resolve(answer) });
-  const store = await harness.context.caches.open('dayflow-shell-v1');
+  const store = await harness.context.caches.open('chronest-shell-v1');
   await store.put(scope + 'styles.css', response('保存済みcss'));
   assert.equal((await harness.dispatch('fetch', { request: harness.request('styles.css') })).response.body, '保存済みcss');
   answer = response('', { status: 404 });
@@ -140,7 +141,7 @@ test('サーバーの不調では保存済みを使い、存在しないファ�
 test('応答が遅いときは保存済みを先に返し、届いた最新は裏で保存する', async () => {
   let deliver;
   const harness = serviceWorkerHarness({ network: () => new Promise(resolve => { deliver = resolve; }) });
-  const store = await harness.context.caches.open('dayflow-shell-v1');
+  const store = await harness.context.caches.open('chronest-shell-v1');
   await store.put(scope + 'tools.js', response('保存済みtools'));
   const result = await harness.dispatch('fetch', { request: harness.request('tools.js') });
   assert.equal(result.response.body, '保存済みtools');

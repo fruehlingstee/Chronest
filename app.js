@@ -166,19 +166,19 @@ function save() {
 function showAppNotification(body, tag = '') {
   const options = { body, tag, icon: 'icons/icon-192.png' };
   const fallback = () => {
-    try { new Notification('Dayflow', options); } catch (_) { /* 表示できなくても、通知済みの記録は続ける。 */ }
+    try { new Notification('Chronest', options); } catch (_) { /* 表示できなくても、通知済みの記録は続ける。 */ }
   };
   try {
     const worker = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
     if (worker && typeof worker.getRegistration === 'function') {
-      worker.getRegistration().then(registration => registration ? registration.showNotification('Dayflow', options) : fallback()).catch(fallback);
+      worker.getRegistration().then(registration => registration ? registration.showNotification('Chronest', options) : fallback()).catch(fallback);
       return;
     }
   } catch (_) { /* Service Worker を確認できない環境では通常の通知を使う。 */ }
   fallback();
 }
 const dayKey=d=>`${String(d.getFullYear()).padStart(4,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`, jp=d=>new Intl.DateTimeFormat('ja-JP',{month:'long',day:'numeric',weekday:'short'}).format(d);
-function shell(content){return `<div class="app"><header class="header"><div class="brand"><b>▸</b> DAYFLOW</div><nav class="nav" aria-label="メインナビゲーション">${[['home','HOME'],['tasks','TASKS'],['calendar','CALENDAR'],['notes','NOTES'],['focus','FOCUS'],['stats','STATS'],['tools','TOOLS']].map(x=>`<button class="${page===x[0]?'active':''}" data-page="${x[0]}" ${page===x[0]?'aria-current="page"':''}>${x[1]}</button>`).join('')}</nav><div class="today">${jp(new Date())}</div></header><p id="storageNotice" role="status" ${storageWarning?'':'hidden'}>${esc(storageWarning)}</p>${content}</div>`}
+function shell(content){return `<div class="app"><header class="header"><div class="brand"><b>▸</b> Chronest</div><nav class="nav" aria-label="メインナビゲーション">${[['home','HOME'],['tasks','TASKS'],['calendar','CALENDAR'],['notes','NOTES'],['focus','FOCUS'],['stats','STATS'],['tools','TOOLS']].map(x=>`<button class="${page===x[0]?'active':''}" data-page="${x[0]}" ${page===x[0]?'aria-current="page"':''}>${x[1]}</button>`).join('')}</nav><div class="today">${jp(new Date())}</div></header><p id="storageNotice" role="status" ${storageWarning?'':'hidden'}>${esc(storageWarning)}</p>${content}</div>`}
 // 統計ページは pages.js が上書きする。読み込めなかった場合はホームを表示する。
 function stats(){return home()}
 function render(){let c=page==='home'?home():page==='tasks'?tasks():page==='calendar'?calendar():page==='notes'?notes():page==='tools'?toolbox():page==='stats'?stats():focus();$('#app').innerHTML=shell(c);document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;render()});bind()}

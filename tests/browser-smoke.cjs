@@ -211,7 +211,7 @@ async function main() {
     const downloadPromise = page.waitForEvent('download');
     await page.locator('#downloadQr').click();
     const download = await downloadPromise;
-    assert.equal(download.suggestedFilename(), 'dayflow-qr.png');
+    assert.equal(download.suggestedFilename(), 'chronest-qr.png');
     const png = fs.readFileSync(await download.path());
     assert.equal(png.subarray(1, 4).toString(), 'PNG');
     await page.locator('#qrText').fill('あ'.repeat(800));

@@ -90,7 +90,7 @@
   let calcResult = '';
   let converterState = { category: 'length', value: '1', from: 'm', to: 'km' };
   let qrState = {
-    text: 'https://fruehlingstee.github.io/dayflow/',
+    text: 'https://fruehlingstee.github.io/Chronest/',
     level: 'M',
     size: 280,
     foreground: '#0b0c0e',
@@ -768,7 +768,7 @@
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = 'dayflow-qr.png';
+        anchor.download = 'chronest-qr.png';
         anchor.click();
         window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
         setToolStatus('QRコードを保存しました。');
