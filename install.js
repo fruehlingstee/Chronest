@@ -145,6 +145,18 @@
     updateBanner();
   }
 
+  // オフラインでも開けるよう Service Worker（sw.js）を登録する。
+  // ファイルを直接開いた場合（file:）は使えないので、http/https のときだけ登録する。
+  function registerServiceWorker() {
+    try {
+      if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
+      navigator.serviceWorker.register('./sw.js').catch(() => { /* 登録できなくても、オンラインでは通常どおり使える。 */ });
+    } catch (_) { /* 非対応の環境では何もしない。 */ }
+  }
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true });
   else initialize();
+  // 画面の表示を優先し、読み込みが終わってから登録する。
+  if (document.readyState === 'complete') registerServiceWorker();
+  else window.addEventListener('load', registerServiceWorker, { once: true });
 })();

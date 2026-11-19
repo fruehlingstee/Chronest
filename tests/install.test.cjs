@@ -20,7 +20,7 @@ function eventTarget() {
   };
 }
 
-function installHarness({ userAgent = androidChrome, touchPoints = 0, standalone = false, iosStandalone = false, session = new Map(), blockedStorage = false, readyState = 'complete' } = {}) {
+function installHarness({ userAgent = androidChrome, touchPoints = 0, standalone = false, iosStandalone = false, session = new Map(), blockedStorage = false, readyState = 'complete', serviceWorker, protocol = 'https:' } = {}) {
   const windowEvents = eventTarget();
   const documentEvents = eventTarget();
   const media = { ...eventTarget(), matches: standalone };
@@ -36,8 +36,8 @@ function installHarness({ userAgent = androidChrome, touchPoints = 0, standalone
   let closed = 0;
   const context = vm.createContext({
     ...windowEvents, console,
-    navigator: { userAgent, maxTouchPoints: touchPoints, standalone: iosStandalone, platform: userAgent.includes('Macintosh') ? 'MacIntel' : '' },
-    location: { protocol: 'https:', href: 'https://example.com/dayflow/' }, isSecureContext: true,
+    navigator: { userAgent, maxTouchPoints: touchPoints, standalone: iosStandalone, platform: userAgent.includes('Macintosh') ? 'MacIntel' : '', ...(serviceWorker ? { serviceWorker } : {}) },
+    location: { protocol, href: protocol === 'file:' ? 'file:///C:/dayflow/index.html' : 'https://example.com/dayflow/' }, isSecureContext: true,
     matchMedia: () => media,
     sessionStorage: {
       getItem(key) { if (blockedStorage) throw new Error('storage unavailable'); return session.get(key) ?? null; },
@@ -179,4 +179,32 @@ test('blocked session storage allows instructions and dismissing without excepti
   assert.match(harness.modal(), /ホーム画面に追加/);
   await harness.click('installDismiss');
   assert.equal(harness.node('installBanner').hidden, true);
+});
+
+function serviceWorkerStub({ fail = false } = {}) {
+  const registrations = [];
+  return { registrations, register(url) { registrations.push(url); return fail ? Promise.reject(new Error('blocked')) : Promise.resolve({}); } };
+}
+
+test('the offline service worker is registered once after the page has loaded', async () => {
+  const loaded = serviceWorkerStub();
+  installHarness({ serviceWorker: loaded });
+  assert.deepEqual(loaded.registrations, ['./sw.js']);
+
+  const loading = serviceWorkerStub();
+  const harness = installHarness({ serviceWorker: loading, readyState: 'loading' });
+  assert.deepEqual(loading.registrations, [], '読み込み中は画面の表示を優先する');
+  await harness.emit('load');
+  assert.deepEqual(loading.registrations, ['./sw.js']);
+});
+
+test('service worker registration is skipped for local files and its failure does not break the banner', async () => {
+  const local = serviceWorkerStub();
+  installHarness({ serviceWorker: local, protocol: 'file:' });
+  assert.deepEqual(local.registrations, []);
+  const failing = serviceWorkerStub({ fail: true });
+  const harness = installHarness({ serviceWorker: failing });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(failing.registrations, ['./sw.js']);
+  assert.equal(harness.node('installBanner').hidden, false);
 });
