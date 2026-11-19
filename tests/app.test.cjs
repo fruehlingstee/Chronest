@@ -5,11 +5,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 // ブラウザや追加パッケージなしで、保存処理と時計の実際の振る舞いを確認する。
-function createApp({ stored, blockedStorage = false, failWrites = false } = {}) {
+function createApp({ stored, blockedStorage = false, failWrites = false, now = '2026-11-19T12:00:00+09:00' } = {}) {
   const storage = new Map(stored === undefined ? [] : [['dayflow-v2', stored]]);
   const nodes = new Map();
   const timers = new Map();
-  let clock = new Date('2026-11-19T12:00:00+09:00').getTime();
+  let clock = new Date(now).getTime();
   let timerId = 0;
   let durationButtons = [];
   const element = () => ({ value: '', textContent: '', hidden: false, focus() {}, setAttribute() {} });
@@ -72,6 +72,9 @@ test('strict backup validation rejects malformed records before changing current
     { tasks: [{ title: 'タスク', repeatRetired: 'true' }], events: [], notes: [] },
     { tasks: [], events: [{ title: '予定', date: '2026-02-30' }], notes: [] },
     { tasks: [], events: [{ title: '予定', date: '2026-11-19', time: '24:00' }], notes: [] },
+    { tasks: [], events: [{ title: '逆転した期間', date: '2026-11-20', endDate: '2026-11-19' }], notes: [] },
+    { tasks: [], events: [{ title: '無効な終了日', date: '2026-11-20', endDate: '2026-11-31' }], notes: [] },
+    { tasks: [], events: [{ title: '不正な終了日型', date: '2026-11-20', endDate: 23 }], notes: [] },
     { tasks: [], events: [], notes: [], sessions: {} },
     { tasks: [], events: [], notes: [], bookmarks: [{ url: 'javascript:alert(1)' }] }
   ]) {
@@ -129,6 +132,53 @@ test('duplicate task and subtask IDs are made unique without dropping records', 
   assert.equal(result.tasks[0].subtasks.length, 3);
   assert.equal(new Set(result.tasks[0].subtasks.map(task => String(task.id))).size, 3);
   assert.deepEqual(result.tasks[0].subtasks.map(task => task.title), ['子1', '子2', '子3']);
+});
+
+test('inclusive event ranges and legacy single-day events survive backup and reload', () => {
+  const original = JSON.stringify({ tasks: [], notes: [], events: [
+    { id: 'range', title: '連続期間', date: '2026-11-20', endDate: '2026-11-23', time: '09:30' },
+    { id: 'legacy', title: '旧形式', date: '2026-11-20' },
+    { id: 'empty-end', title: '空欄終了日', date: '2026-11-20', endDate: '' }
+  ] });
+  const app = createApp({ stored: original });
+  assert.equal(app.run('data.events[0].date'), '2026-11-20');
+  assert.equal(app.run('data.events[0].endDate'), '2026-11-23');
+  assert.equal(app.run('data.events[1].endDate'), '2026-11-20');
+  assert.equal(app.run('data.events[2].endDate'), '2026-11-20');
+  app.run('save()');
+  const reloaded = createApp({ stored: app.storage.get('dayflow-v2') });
+  assert.equal(reloaded.run('data.events.length'), 3);
+  assert.equal(reloaded.run('data.events[0].endDate'), '2026-11-23');
+  assert.equal(reloaded.run('data.events[0].time'), '09:30');
+});
+
+test('invalid event ranges recover as single-day events while retaining the original backup', () => {
+  for (const endDate of ['2026-11-19', '2026-11-31', 23]) {
+    const original = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'range', title: '元の予定', date: '2026-11-20', endDate }] });
+    const app = createApp({ stored: original });
+    assert.equal(app.run('data.events.length'), 1);
+    assert.equal(app.run('data.events[0].title'), '元の予定');
+    assert.equal(app.run('data.events[0].endDate'), '2026-11-20');
+    assert.equal(app.run('save()'), true);
+    const recovery = [...app.storage.entries()].find(([key]) => key.startsWith('dayflow-v2-recovery-'));
+    assert.equal(recovery[1], original);
+  }
+});
+
+test('TODAY includes the first, middle and last dates of a range exactly once', () => {
+  const stored = JSON.stringify({ tasks: [], notes: [], events: [{ id: 'range', title: '期間の予定', date: '2026-11-20', endDate: '2026-11-23', time: '09:30' }] });
+  for (const day of ['19', '20', '21', '22', '23', '24']) {
+    const app = createApp({ stored, now: `2026-11-${day}T12:00:00` });
+    const html = app.run('home()');
+    if (day >= '20' && day <= '23') {
+      assert.equal((html.match(/期間の予定/g) || []).length, 1, day);
+      assert.match(html, /今日の予定 1 件/);
+      assert.match(html, day === '20' ? /09:30/ : day === '23' ? /最終日/ : /期間中/);
+    } else {
+      assert.doesNotMatch(html, /期間の予定/);
+      assert.doesNotMatch(html, /今日の予定 1 件/);
+    }
+  }
 });
 
 test('malformed JSON is retained for recovery before replacing the active storage key', () => {

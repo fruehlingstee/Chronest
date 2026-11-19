@@ -344,7 +344,8 @@
   };
 
   let selectedDay = todayKey();
-  let eventDraft = { date: selectedDay, time: '', title: '' };
+  let eventDraft = { date: selectedDay, endDate: selectedDay, time: '', title: '' };
+  let eventDraftStart = selectedDay;
 
   function parseCalendarDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -361,9 +362,44 @@
     return a.date.localeCompare(b.date) || (a.time || '').localeCompare(b.time || '') || a.title.localeCompare(b.title, 'ja');
   }
 
+  function eventEndDate(event) {
+    return event.endDate || event.date;
+  }
+
+  function eventIncludesDay(event, key) {
+    return event.date <= key && key <= eventEndDate(event);
+  }
+
+  function eventRangeLabel(event) {
+    return eventEndDate(event) === event.date ? event.date : `${event.date} 〜 ${eventEndDate(event)}`;
+  }
+
+  function eventPhase(event, key) {
+    if (eventEndDate(event) === event.date) return 'single';
+    return key === event.date ? 'start' : key === eventEndDate(event) ? 'end' : 'middle';
+  }
+
+  function shiftEventRange(start, end, nextStart) {
+    const next = parseCalendarDate(nextStart);
+    if (!next) return end;
+    if (!end) return nextStart;
+    if (!parseCalendarDate(start) || !parseCalendarDate(end) || end < start) return end;
+    const span = Math.round((Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / 86400000);
+    next.setDate(next.getDate() + span);
+    return next.getFullYear() > 9999 ? '9999-12-31' : calendarDateKey(next);
+  }
+
+  function shiftEventDraftStart(key) {
+    const previousStart = parseCalendarDate(eventDraft.date) ? eventDraft.date : eventDraftStart;
+    eventDraft.endDate = shiftEventRange(previousStart, eventDraft.endDate, key);
+    eventDraft.date = key;
+    eventDraftStart = key;
+  }
+
   function rememberEventDraft() {
     eventDraft = {
       date: document.querySelector('#eventDate').value,
+      endDate: document.querySelector('#eventEndDate').value,
       time: document.querySelector('#eventTime').value,
       title: document.querySelector('#eventTitle').value
     };
@@ -373,17 +409,18 @@
     const date = parseCalendarDate(key);
     if (!date) return;
     selectedDay = key;
-    eventDraft.date = key;
+    shiftEventDraftStart(key);
     month = new Date(date.getTime());
     month.setDate(1);
     render();
     if (focusDay) document.querySelector(`[data-calendar-day="${key}"]`)?.focus();
   }
 
-  function validateEventForm(form, titleInput, dateInput, timeInput) {
+  function validateEventForm(form, titleInput, dateInput, timeInput, endDateInput) {
     titleInput.setCustomValidity(titleInput.value.trim() ? '' : '予定のタイトルを入力してください。');
     dateInput.setCustomValidity(parseCalendarDate(dateInput.value) ? '' : '正しい日付を入力してください。');
     timeInput.setCustomValidity(!timeInput.value || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(timeInput.value) ? '' : '正しい時刻を入力してください。');
+    endDateInput.setCustomValidity(!endDateInput.value ? '' : !parseCalendarDate(endDateInput.value) ? '正しい終了日を入力してください。' : endDateInput.value < dateInput.value ? '終了日は開始日以降にしてください。' : '');
     return form.reportValidity();
   }
 
@@ -394,23 +431,37 @@
       <form id="editEventForm">
         <label for="editEventTitle">タイトル</label><input class="input" id="editEventTitle" maxlength="120" required value="${esc(item.title)}">
         <div class="modal-grid">
-          <div><label for="editEventDate">日付</label><input class="input" id="editEventDate" type="date" min="0001-01-01" max="9999-12-31" required value="${esc(item.date)}"></div>
-          <div><label for="editEventTime">時刻（空欄は終日）</label><input class="input" id="editEventTime" type="time" value="${esc(item.time || '')}"></div>
+          <div><label for="editEventDate">開始日</label><input class="input" id="editEventDate" type="date" min="0001-01-01" max="9999-12-31" required value="${esc(item.date)}"></div>
+          <div><label for="editEventEndDate">終了日（空欄は同日）</label><input class="input" id="editEventEndDate" type="date" min="${esc(item.date)}" max="9999-12-31" value="${esc(eventEndDate(item))}"></div>
+          <div><label for="editEventTime">開始時刻（空欄は終日）</label><input class="input" id="editEventTime" type="time" value="${esc(item.time || '')}"></div>
         </div>
+        <p class="calendar-period-hint">終了日も予定に含みます。時刻は開始日のみに適用されます。</p>
         <div class="modal-actions"><button class="button dim" type="button" id="cancelEventEdit">キャンセル</button><button class="button" type="submit">保存</button></div>
       </form>
       <div class="danger-zone"><p>次の確認画面で削除を確定します。</p><button class="button danger" id="deleteCalendarEvent">削除へ進む</button></div>`);
     const form = document.querySelector('#editEventForm');
     const titleInput = document.querySelector('#editEventTitle');
     const dateInput = document.querySelector('#editEventDate');
+    const endDateInput = document.querySelector('#editEventEndDate');
     const timeInput = document.querySelector('#editEventTime');
-    [titleInput, dateInput, timeInput].forEach(input => input.oninput = () => input.setCustomValidity(''));
+    let previousStart = item.date;
+    [titleInput, endDateInput, timeInput].forEach(input => input.oninput = () => input.setCustomValidity(''));
+    dateInput.oninput = () => {
+      dateInput.setCustomValidity('');
+      if (parseCalendarDate(dateInput.value)) {
+        endDateInput.value = shiftEventRange(previousStart, endDateInput.value, dateInput.value);
+        endDateInput.min = dateInput.value;
+        endDateInput.setCustomValidity('');
+        previousStart = dateInput.value;
+      }
+    };
     document.querySelector('#cancelEventEdit').onclick = closeModal;
     form.onsubmit = event => {
       event.preventDefault();
-      if (!validateEventForm(form, titleInput, dateInput, timeInput)) return;
+      if (!validateEventForm(form, titleInput, dateInput, timeInput, endDateInput)) return;
       item.title = titleInput.value.trim();
       item.date = dateInput.value;
+      item.endDate = endDateInput.value || item.date;
       item.time = timeInput.value;
       save();
       closeModal();
@@ -428,46 +479,67 @@
     const monthKey = `${String(year).padStart(4, '0')}-${String(currentMonth + 1).padStart(2, '0')}`;
     if (!selectedDay.startsWith(monthKey + '-')) {
       selectedDay = monthKey + '-01';
-      eventDraft.date = selectedDay;
+      shiftEventDraftStart(selectedDay);
     }
     const first = parseCalendarDate(monthKey + '-01');
     const end = new Date(first.getTime());
     end.setMonth(end.getMonth() + 1, 0);
     const start = first.getDay(), days = end.getDate();
+    const firstKey = calendarDateKey(first), lastKey = calendarDateKey(end);
     const events = data.events.slice().sort(compareEvents);
-    const monthEvents = events.filter(event => event.date.startsWith(monthKey + '-'));
+    const monthEvents = events.filter(event => event.date <= lastKey && eventEndDate(event) >= firstKey);
     const dueTasks = data.tasks.filter(task => !task.done && (task.due || '').startsWith(monthKey + '-'));
-    const selectedEvents = events.filter(event => event.date === selectedDay);
+    const selectedEvents = monthEvents.filter(event => eventIncludesDay(event, selectedDay));
     const selectedTasks = dueTasks.filter(task => task.due === selectedDay);
+    const phaseLabel = { single: '', start: '開始', middle: '期間中', end: '終了' };
+    const eventTime = (event, key) => ['single', 'start'].includes(eventPhase(event, key)) ? event.time || '終日' : phaseLabel[eventPhase(event, key)];
+    const eventDetails = event => eventEndDate(event) !== event.date ? `<small class="event-range-label">${esc(eventRangeLabel(event))} · ${event.time ? `開始 ${esc(event.time)}` : '終日'}</small>` : '';
     const cells = ['日','月','火','水','木','金','土'].map(day => `<div class="dayname">${day}</div>`);
     for (let index = 0; index < start; index++) cells.push('<div class="day day-outside" aria-hidden="true"></div>');
     for (let day = 1; day <= days; day++) {
       const key = `${monthKey}-${String(day).padStart(2, '0')}`;
-      const dayEvents = monthEvents.filter(event => event.date === key);
+      const dayEvents = monthEvents.filter(event => eventIncludesDay(event, key));
       const dayTasks = dueTasks.filter(task => task.due === key);
+      const dayItems = dayEvents.map(event => {
+        const phase = eventPhase(event, key), multiDay = phase !== 'single';
+        const fullLabel = `${eventRangeLabel(event)} ${event.time ? `開始 ${event.time}` : '終日'} ${phaseLabel[phase]} ${event.title}`;
+        return {
+          kind: multiDay ? 'range' : 'event',
+          html: `<button type="button" class="event calendar-event event-range-${phase} ${multiDay ? 'is-multi-day' : ''}" data-event-edit="${esc(event.id)}" title="${esc(fullLabel)}" aria-label="${esc(fullLabel)}を編集">${multiDay ? `<span class="event-phase">${phaseLabel[phase]}</span>` : ''}<span class="calendar-event-title">${['single', 'start'].includes(phase) ? esc(event.time || '終日') + ' ' : ''}${esc(event.title)}</span></button>`
+        };
+      }).concat(dayTasks.map(task => ({
+        kind: 'task',
+        html: `<button type="button" class="event task-event calendar-event" data-calendar-task="${esc(task.id)}" title="期限 ${esc(task.title)}" aria-label="タスク ${esc(task.title)}を編集"><span class="calendar-event-title">期限 ${esc(task.title)}</span></button>`
+      })));
       cells.push(`<div class="day ${key === todayKey() ? 'today' : ''} ${key === selectedDay ? 'selected-day' : ''}">
         <button type="button" class="calendar-date" data-calendar-day="${key}" aria-label="${year}年${currentMonth + 1}月${day}日、予定${dayEvents.length}件、タスク期限${dayTasks.length}件" aria-pressed="${key === selectedDay}" ${key === todayKey() ? 'aria-current="date"' : ''}>${day}</button>
-        ${dayEvents.map(event => `<button type="button" class="event calendar-event" data-event-edit="${esc(event.id)}" title="${esc(event.time || '終日')} ${esc(event.title)}" aria-label="${esc(event.title)}を編集">${esc(event.time || '終日')} ${esc(event.title)}</button>`).join('')}
-        ${dayTasks.map(task => `<button type="button" class="event task-event calendar-event" data-calendar-task="${esc(task.id)}" title="期限 ${esc(task.title)}" aria-label="タスク ${esc(task.title)}を編集">期限 ${esc(task.title)}</button>`).join('')}
+        <div class="calendar-day-markers" aria-hidden="true">${dayItems.slice(0, 3).map(item => `<span class="calendar-dot ${item.kind}-dot"></span>`).join('')}${dayItems.length > 3 ? `<span class="calendar-marker-count">+${dayItems.length - 3}</span>` : ''}</div>
+        ${dayItems.slice(0, 3).map(item => item.html).join('')}
+        ${dayItems.length > 3 ? `<button type="button" class="calendar-more" data-calendar-select="${key}" aria-label="${key}のすべての予定とタスク期限を表示">+${dayItems.length - 3}件</button>` : ''}
       </div>`);
     }
     for (let index = (start + days) % 7; index > 0 && index < 7; index++) cells.push('<div class="day day-outside" aria-hidden="true"></div>');
     return `<main class="page calendar-page">
       <div class="page-head"><h1 class="title" aria-live="polite">${year}年 ${currentMonth + 1}月</h1><div class="calendar-navigation"><button class="ghost" id="prevMonth" aria-label="前の月" ${year === 1 && currentMonth === 0 ? 'disabled' : ''}>←</button><button class="ghost" id="todayMonth">今日</button><button class="ghost" id="nextMonth" aria-label="次の月" ${year === 9999 && currentMonth === 11 ? 'disabled' : ''}>→</button></div></div>
       <form class="toolbar calendar-form" id="eventForm">
-        <div class="field"><label for="eventDate">日付</label><input class="select" id="eventDate" type="date" min="0001-01-01" max="9999-12-31" value="${esc(eventDraft.date)}" required></div>
-        <div class="field"><label for="eventTime">時刻（空欄は終日）</label><input class="select" id="eventTime" type="time" value="${esc(eventDraft.time)}"></div>
+        <div class="field"><label for="eventDate">開始日</label><input class="select" id="eventDate" type="date" min="0001-01-01" max="9999-12-31" value="${esc(eventDraft.date)}" required></div>
+        <div class="field"><label for="eventEndDate">終了日（空欄は同日）</label><input class="select" id="eventEndDate" type="date" min="${esc(eventDraft.date)}" max="9999-12-31" value="${esc(eventDraft.endDate)}"></div>
+        <div class="field"><label for="eventTime">開始時刻（空欄は終日）</label><input class="select" id="eventTime" type="time" value="${esc(eventDraft.time)}"></div>
         <div class="field calendar-title-field"><label for="eventTitle">タイトル</label><input class="input" id="eventTitle" maxlength="120" required placeholder="新しい予定" value="${esc(eventDraft.title)}"></div>
         <button class="button" type="submit">予定を追加</button>
       </form>
+      <p class="calendar-period-hint">開始日〜終了日をまとめて登録。日付を選ぶと下に予定を表示します。時刻は開始日のみに適用されます。</p>
       <section class="panel calendar-panel" aria-label="${year}年${currentMonth + 1}月のカレンダー"><div class="calendar">${cells.join('')}</div></section>
-      <section class="panel calendar-agenda" aria-labelledby="selectedDayHeading"><h3 id="selectedDayHeading">${esc(selectedDay)} の予定</h3>
-        ${selectedEvents.map(event => `<div class="agenda-row"><time>${esc(event.time || '終日')}</time><span>${esc(event.title)}</span><button class="ghost" data-event-edit="${esc(event.id)}" aria-label="${esc(event.title)}を編集">編集</button></div>`).join('')}
+      <section class="panel calendar-agenda" aria-labelledby="selectedDayHeading"><h3 class="calendar-selection-heading" id="selectedDayHeading">${esc(selectedDay)} の予定 <span>${selectedEvents.length + selectedTasks.length}件</span></h3>
+        ${selectedEvents.map(event => `<div class="agenda-row"><time>${esc(eventTime(event, selectedDay))}</time><span class="agenda-event-copy"><span class="agenda-event-title">${esc(event.title)}</span>${eventDetails(event)}</span><button class="ghost" data-event-edit="${esc(event.id)}" aria-label="${esc(event.title)}を編集">編集</button></div>`).join('')}
         ${selectedTasks.map(task => `<div class="agenda-row"><time class="tag">期限</time><span>${esc(task.title)}</span><button class="ghost" data-calendar-task="${esc(task.id)}" aria-label="タスク ${esc(task.title)}を編集">タスクを編集</button></div>`).join('')}
         ${selectedEvents.length || selectedTasks.length ? '' : '<div class="empty">この日の予定・タスク期限はありません</div>'}
       </section>
       <section class="panel calendar-agenda" aria-labelledby="monthAgendaHeading"><h3 id="monthAgendaHeading">この月の予定 · ${monthEvents.length}件</h3>
-        ${monthEvents.map(event => `<div class="agenda-row month-agenda-row"><button class="ghost agenda-date" data-calendar-select="${esc(event.date)}">${esc(event.date.slice(5))}</button><time>${esc(event.time || '終日')}</time><span>${esc(event.title)}</span><button class="ghost" data-event-edit="${esc(event.id)}" aria-label="${esc(event.title)}を編集">編集</button></div>`).join('') || '<div class="empty">この月の予定はありません</div>'}
+        ${monthEvents.map(event => {
+          const visibleDate = event.date < firstKey ? firstKey : event.date;
+          return `<div class="agenda-row month-agenda-row"><button class="ghost agenda-date" data-calendar-select="${esc(visibleDate)}" aria-label="${esc(visibleDate)}の予定を表示、予定期間 ${esc(eventRangeLabel(event))}">${esc(visibleDate.slice(5))}</button><time>${esc(eventTime(event, visibleDate))}</time><span class="agenda-event-copy"><span class="agenda-event-title">${esc(event.title)}</span>${eventDetails(event)}</span><button class="ghost" data-event-edit="${esc(event.id)}" aria-label="${esc(event.title)}を編集">編集</button></div>`;
+        }).join('') || '<div class="empty">この月の予定はありません</div>'}
       </section>
     </main>`;
   };
@@ -610,24 +682,35 @@
       const form = document.querySelector('#eventForm');
       const titleInput = document.querySelector('#eventTitle');
       const dateInput = document.querySelector('#eventDate');
+      const endDateInput = document.querySelector('#eventEndDate');
       const timeInput = document.querySelector('#eventTime');
-      [titleInput, dateInput, timeInput].forEach(input => input.oninput = () => {
+      [titleInput, endDateInput, timeInput].forEach(input => input.oninput = () => {
         input.setCustomValidity('');
         rememberEventDraft();
       });
+      dateInput.oninput = () => {
+        dateInput.setCustomValidity('');
+        if (parseCalendarDate(dateInput.value)) {
+          shiftEventDraftStart(dateInput.value);
+          endDateInput.value = eventDraft.endDate;
+          endDateInput.min = dateInput.value;
+          endDateInput.setCustomValidity('');
+        }
+        rememberEventDraft();
+      };
       dateInput.onchange = () => {
         rememberEventDraft();
         if (parseCalendarDate(dateInput.value)) selectCalendarDay(dateInput.value);
       };
       document.querySelector('#eventForm').onsubmit = event => {
         event.preventDefault();
-        if (!validateEventForm(form, titleInput, dateInput, timeInput)) return;
+        if (!validateEventForm(form, titleInput, dateInput, timeInput, endDateInput)) return;
         const date = dateInput.value;
         data.events.push({
           id: globalThis.crypto?.randomUUID?.() || `event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          date, time: timeInput.value, title: titleInput.value.trim()
+          date, endDate: endDateInput.value || date, time: timeInput.value, title: titleInput.value.trim()
         });
-        eventDraft = { date, time: '', title: '' };
+        eventDraft = { date, endDate: date, time: '', title: '' };
         save();
         selectCalendarDay(date);
         document.querySelector('#eventTitle').focus();

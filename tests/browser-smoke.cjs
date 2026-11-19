@@ -78,10 +78,51 @@ async function main() {
     await page.locator('[data-event-edit]').first().click();
     await page.locator('#editEventTitle').fill('打ち合わせを変更');
     await page.locator('#editEventForm button[type="submit"]').click();
-    assert.equal(await page.locator('.calendar-event').first().innerText(), '09:30 打ち合わせを変更');
+    assert.match(await page.locator('.calendar-event').first().innerText(), /打ち合わせを変更/);
+    await page.locator('#eventDate').fill('2028-02-28');
+    await page.locator('#eventDate').dispatchEvent('change');
+    await page.locator('#eventEndDate').fill('2028-03-02');
+    await page.locator('#eventTime').fill('');
+    await page.locator('#eventTitle').fill('連休の予定');
+    await page.locator('#eventForm button[type="submit"]').click();
+    const period = await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')).events.find(event => event.title === '連休の予定'));
+    assert.equal(period.date, '2028-02-28');
+    assert.equal(period.endDate, '2028-03-02');
+    assert.equal(await page.locator(`.calendar [data-event-edit="${period.id}"]`).count(), 2, '2月28日・閏日の両方に表示する');
+    await page.locator('#nextMonth').click();
+    assert.equal(await page.locator(`.calendar [data-event-edit="${period.id}"]`).count(), 2, '3月1日・終了日の両方に表示する');
+    assert.equal(await page.locator(`.month-agenda-row [data-event-edit="${period.id}"]`).count(), 1, '月の一覧では期間予定を重複させない');
+    await page.locator('[data-calendar-day="2028-03-01"]').click();
+    assert.match(await page.locator('[aria-labelledby="selectedDayHeading"]').innerText(), /連休の予定/);
+    await page.locator(`.calendar [data-event-edit="${period.id}"]`).first().click();
+    await page.locator('#editEventEndDate').fill('2028-03-03');
+    await page.locator('#editEventForm button[type="submit"]').click();
+    await page.locator('#nextMonth').click();
+    assert.equal(await page.locator(`.calendar [data-event-edit="${period.id}"]`).count(), 3);
+    await page.locator('[data-calendar-day="2028-03-01"]').click();
+    const contrast = await page.locator('.calendar-event').first().evaluate(element => {
+      const luminance = color => {
+        const rgb = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => { const channel = value / 255; return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4); });
+        return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+      };
+      const style = getComputedStyle(element), a = luminance(style.color), b = luminance(style.backgroundColor);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    assert.ok(contrast >= 4.5, '予定の文字と背景に十分な明度差がある');
+    if (process.env.DAYFLOW_SCREENSHOTS) {
+      fs.mkdirSync(process.env.DAYFLOW_SCREENSHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.DAYFLOW_SCREENSHOTS, 'calendar-range-desktop.png'), fullPage: true });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    const calendarBounds = await page.locator('.calendar').boundingBox();
+    assert.ok(calendarBounds.width <= 360, 'スマホでも7日分が横スクロールなしで見渡せる');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    if (process.env.DAYFLOW_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.DAYFLOW_SCREENSHOTS, 'calendar-range-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1050 });
     await page.reload();
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')));
     assert.equal(stored.events[0].title, '打ち合わせを変更');
+    assert.equal(stored.events.find(event => event.id === period.id).endDate, '2028-03-03', '期間を再読み込み後も保持する');
     await page.locator('nav [data-page="calendar"]').click();
     await page.evaluate(() => { month = new Date(2026, 0, 31, 12); render(); });
     await page.locator('#nextMonth').click();
@@ -212,7 +253,7 @@ async function main() {
     await filePage.locator('[data-tool="qr"]').click();
     assert.equal(await filePage.locator('#qrCanvas').isVisible(), true, 'index.htmlを直接開いてもQRを生成できる');
     assert.deepEqual(errors, []);
-    console.log('ブラウザ確認成功: 最上部のインストール案内・iPhone手順・manifest・アイコン・インストール操作、タスク増殖防止、編集保存、カレンダー、日本語QR、390px表示、ページ外タイマー。');
+    console.log('ブラウザ確認成功: 複数日の予定・月またぎ・閏日・編集保存・配色コントラスト・スマホ7列、インストール案内、タスク増殖防止、日本語QR、ページ外タイマー。');
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));
