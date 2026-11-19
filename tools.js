@@ -97,6 +97,9 @@
     background: '#ffffff'
   };
   let qrTimer = null;
+  let qrComposing = false;
+  const qrEncoder = new TextEncoder();
+  const qrCapacity = { L: 2953, M: 2331, Q: 1663, H: 1273 };
   let diffState = { before: '', after: '', view: 'split', result: null };
 
   data.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks.map(function (item) {
@@ -584,7 +587,8 @@
       '<span class="local-note">入力内容は送信されません</span></div>' +
       '<div class="qr-layout"><section class="panel qr-controls">' +
       '<div class="field"><label for="qrText">QRにする内容</label><textarea id="qrText" rows="7" maxlength="4000" placeholder="URLやテキストを入力">' + esc(qrState.text) + '</textarea>' +
-      '<div class="field-meta"><span id="qrCharacterCount">' + qrState.text.length + ' / 4000</span><button class="ghost" id="pasteQrText" type="button">貼り付け</button></div></div>' +
+      '<div class="field-meta"><span id="qrCharacterCount">' + qrTextCount() + '</span><button class="ghost" id="pasteQrText" type="button">貼り付け</button></div>' +
+      '<p class="tool-hint">日本語・絵文字・改行に対応。空白も入力どおりに変換します。収まる文字数は内容と誤り訂正レベルで変わります。</p></div>' +
       '<div class="qr-options"><div class="field"><label for="qrLevel">誤り訂正</label><select class="select" id="qrLevel">' +
       [['L','低（容量優先）'],['M','標準'],['Q','高'],['H','最高']].map(function (item) { return '<option value="' + item[0] + '"' + (qrState.level === item[0] ? ' selected' : '') + '>' + item[1] + '</option>'; }).join('') +
       '</select></div><div class="field"><label for="qrSize">画像サイズ</label><select class="select" id="qrSize">' +
@@ -594,44 +598,80 @@
       '<label>背景色<input type="color" id="qrBackground" value="' + esc(qrState.background) + '"></label></div>' +
       '<div class="tool-actions bottomless"><button class="button" id="generateQr" type="button">生成</button><button class="button dim" id="resetQr" type="button">リセット</button></div></section>' +
       '<section class="panel qr-preview"><div class="qr-stage" id="qrStage"><canvas id="qrCanvas" aria-label="生成されたQRコード"></canvas><div class="qr-placeholder" id="qrPlaceholder">内容を入力するとQRコードを生成します</div></div>' +
-      '<div class="qr-meta" id="qrMeta"></div><div class="tool-actions qr-downloads"><button class="button" id="downloadQr" type="button" disabled>PNGを保存</button>' +
+      '<div class="qr-meta" id="qrMeta" role="status" aria-live="polite"></div><div class="tool-actions qr-downloads"><button class="button" id="downloadQr" type="button" disabled>PNGを保存</button>' +
       '<button class="button dim" id="copyQr" type="button" disabled>画像をコピー</button></div></section></div>';
   }
 
+  function qrTextCount() {
+    return Array.from(qrState.text).length + '文字 · ' + qrEncoder.encode(qrState.text).length + 'バイト';
+  }
+
+  function qrPlaceholder(message) {
+    const canvas = document.querySelector('#qrCanvas');
+    if (!canvas) return;
+    canvas.hidden = true;
+    const placeholder = document.querySelector('#qrPlaceholder');
+    placeholder.hidden = false;
+    placeholder.textContent = message;
+    document.querySelector('#qrMeta').textContent = '';
+    document.querySelector('#downloadQr').disabled = true;
+    document.querySelector('#copyQr').disabled = true;
+  }
+
+  function qrContrast(foreground, background) {
+    function luminance(color) {
+      const rgb = color.match(/[a-f\d]{2}/gi).map(function (part) {
+        const value = parseInt(part, 16) / 255;
+        return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+      });
+      return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    }
+    const dark = luminance(foreground);
+    const light = luminance(background);
+    return dark < light ? (light + 0.05) / (dark + 0.05) : 0;
+  }
+
   function drawQr() {
+    window.clearTimeout(qrTimer);
     const canvas = document.querySelector('#qrCanvas');
     const placeholder = document.querySelector('#qrPlaceholder');
     const meta = document.querySelector('#qrMeta');
     const download = document.querySelector('#downloadQr');
     const copy = document.querySelector('#copyQr');
-    if (!canvas) return;
-    const text = qrState.text.trim();
+    if (!canvas) return false;
+    if (qrComposing) {
+      qrPlaceholder('文字の変換を確定するとQRコードを生成します');
+      return false;
+    }
+    const text = qrState.text;
     if (!text) {
-      canvas.hidden = true;
-      placeholder.hidden = false;
-      placeholder.textContent = '内容を入力するとQRコードを生成します';
-      meta.textContent = '';
-      download.disabled = true;
-      copy.disabled = true;
-      return;
+      qrPlaceholder('内容を入力するとQRコードを生成します');
+      return false;
+    }
+    if (qrEncoder.encode(text).length > qrCapacity[qrState.level]) {
+      qrPlaceholder('内容が長すぎます。文字数を減らすか、誤り訂正レベルを下げてください（現在 ' + qrEncoder.encode(text).length + ' / ' + qrCapacity[qrState.level] + ' バイト）。');
+      return false;
+    }
+    if (qrContrast(qrState.foreground, qrState.background) < 4.5) {
+      qrPlaceholder('読み取りやすいように、前景色を暗く、背景色を明るくして色の差を広げてください。');
+      return false;
     }
     if (typeof window.qrcode !== 'function') {
-      canvas.hidden = true;
-      placeholder.hidden = false;
-      placeholder.textContent = 'QR生成ライブラリを読み込めませんでした。通信状態を確認してください。';
-      meta.textContent = '';
-      download.disabled = true;
-      copy.disabled = true;
-      return;
+      qrPlaceholder('QR生成ライブラリを読み込めませんでした。ページを再読み込みしてください。');
+      return false;
     }
     try {
+      // Byteモードの既定値は1バイト文字用のため、UnicodeをUTF-8で符号化する。
+      window.qrcode.stringToBytes = function (value) { return Array.from(qrEncoder.encode(value)); };
       const qr = window.qrcode(0, qrState.level);
       qr.addData(text, 'Byte');
       qr.make();
       const modules = qr.getModuleCount();
       const quietZone = 4;
-      const cellSize = Math.max(1, Math.floor(qrState.size / (modules + quietZone * 2)));
-      const actualSize = cellSize * (modules + quietZone * 2);
+      const totalModules = modules + quietZone * 2;
+      const actualSize = Math.max(qrState.size, totalModules * 3);
+      const cellSize = Math.floor(actualSize / totalModules);
+      const offset = Math.floor((actualSize - modules * cellSize) / 2);
       canvas.width = actualSize;
       canvas.height = actualSize;
       const context = canvas.getContext('2d', { alpha: false });
@@ -641,28 +681,26 @@
       for (let row = 0; row < modules; row++) {
         for (let column = 0; column < modules; column++) {
           if (qr.isDark(row, column)) {
-            context.fillRect((column + quietZone) * cellSize, (row + quietZone) * cellSize, cellSize, cellSize);
+            context.fillRect(offset + column * cellSize, offset + row * cellSize, cellSize, cellSize);
           }
         }
       }
       canvas.hidden = false;
       placeholder.hidden = true;
-      meta.textContent = modules + ' × ' + modules + ' modules · ' + actualSize + ' px · ' + text.length + '文字';
+      meta.textContent = actualSize + ' px · ' + qrTextCount() + (actualSize > qrState.size ? ' · 読み取りやすいサイズに拡大' : '');
       download.disabled = false;
       copy.disabled = false;
+      return true;
     } catch (error) {
-      canvas.hidden = true;
-      placeholder.hidden = false;
-      placeholder.textContent = '内容が長すぎます。文字数を減らすか、誤り訂正レベルを下げてください。';
-      meta.textContent = '';
-      download.disabled = true;
-      copy.disabled = true;
+      qrPlaceholder('QRコードを生成できませんでした。内容や画像設定を確認して再生成してください。');
+      return false;
     }
   }
 
   function scheduleQrDraw() {
     window.clearTimeout(qrTimer);
-    qrTimer = window.setTimeout(drawQr, 180);
+    qrPlaceholder(qrComposing ? '文字の変換を確定するとQRコードを生成します' : 'QRコードを更新しています…');
+    if (!qrComposing) qrTimer = window.setTimeout(drawQr, 180);
   }
 
   function canvasBlob(canvas) {
@@ -676,9 +714,17 @@
 
   function bindQr() {
     const text = document.querySelector('#qrText');
+    qrComposing = false;
+    text.addEventListener('compositionstart', function () { qrComposing = true; scheduleQrDraw(); });
+    text.addEventListener('compositionend', function () {
+      qrComposing = false;
+      qrState.text = text.value;
+      document.querySelector('#qrCharacterCount').textContent = qrTextCount();
+      scheduleQrDraw();
+    });
     text.oninput = function (event) {
       qrState.text = event.target.value;
-      document.querySelector('#qrCharacterCount').textContent = qrState.text.length + ' / 4000';
+      document.querySelector('#qrCharacterCount').textContent = qrTextCount();
       scheduleQrDraw();
     };
     document.querySelector('#qrLevel').onchange = function (event) {
@@ -705,9 +751,11 @@
     document.querySelector('#pasteQrText').onclick = async function () {
       try {
         if (!navigator.clipboard || !window.isSecureContext) throw new Error();
-        qrState.text = await navigator.clipboard.readText();
+        const pasted = await navigator.clipboard.readText();
+        if (!text.isConnected) return;
+        qrState.text = pasted;
         text.value = qrState.text;
-        document.querySelector('#qrCharacterCount').textContent = qrState.text.length + ' / 4000';
+        document.querySelector('#qrCharacterCount').textContent = qrTextCount();
         drawQr();
       } catch (_) {
         setToolStatus('クリップボードを読み取れませんでした。', 'error');
@@ -715,6 +763,7 @@
     };
     document.querySelector('#downloadQr').onclick = async function () {
       try {
+        if (!drawQr()) return;
         const canvas = document.querySelector('#qrCanvas');
         const blob = await canvasBlob(canvas);
         const url = URL.createObjectURL(blob);
@@ -730,6 +779,7 @@
     };
     document.querySelector('#copyQr').onclick = async function () {
       try {
+        if (!drawQr()) return;
         if (!navigator.clipboard || typeof window.ClipboardItem !== 'function' || !window.isSecureContext) throw new Error();
         const blob = await canvasBlob(document.querySelector('#qrCanvas'));
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
@@ -962,6 +1012,7 @@
   }
 
   bind = function () {
+    window.clearTimeout(qrTimer);
     if (page !== 'tools') {
       previousBind();
       return;

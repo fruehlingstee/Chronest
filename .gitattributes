@@ -1,0 +1,2 @@
+# 同梱ライブラリの取得時ハッシュをOS間でも保持する。
+vendor/qrcode.js -text

@@ -1,0 +1,185 @@
+// 実行例: NODE_PATH に Playwright の場所を指定し node tests/browser-smoke.cjs
+// ブラウザは一時プロファイル、データはテスト専用の localhost 内だけで使用する。
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const { pathToFileURL } = require('node:url');
+const { chromium } = require('playwright');
+
+async function main() {
+  const root = path.resolve(__dirname, '..');
+  const files = new Set(['index.html', 'app.js', 'enhancements.js', 'tools.js', 'styles.css', 'vendor/qrcode.js']);
+  const server = http.createServer((request, response) => {
+    const file = new URL(request.url, 'http://localhost').pathname.slice(1) || 'index.html';
+    if (!files.has(file)) { response.writeHead(404).end(); return; }
+    response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8');
+    fs.createReadStream(path.join(root, file)).pipe(response);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let browser;
+  try {
+    const edge = process.env.DAYFLOW_BROWSER_PATH || path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Microsoft/Edge/Application/msedge.exe');
+    browser = await chromium.launch({ headless: true, ...(fs.existsSync(edge) ? { executablePath: edge } : {}) });
+    const context = await browser.newContext({ timezoneId: 'Asia/Tokyo', viewport: { width: 1440, height: 1050 } });
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const localFiles = pathToFileURL(root + path.sep).href;
+    // 外部通信を切った状態でも、同梱したライブラリでQRが動作することを検証する。
+    await context.route('**/*', route => route.request().url().startsWith(origin) || route.request().url().startsWith(localFiles) ? route.continue() : route.abort());
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(origin);
+    assert.equal(await page.locator('h1').innerText(), '今日を、整える。');
+
+    await page.locator('nav [data-page="calendar"]').click();
+    await page.locator('#eventDate').fill('2028-02-29');
+    await page.locator('#eventDate').dispatchEvent('change');
+    await page.locator('#eventTime').fill('09:30');
+    await page.locator('#eventTitle').fill('打ち合わせ <重要>');
+    await page.locator('#eventForm button[type="submit"]').click();
+    assert.equal(await page.locator('h1').innerText(), '2028年 2月');
+    await page.locator('[data-event-edit]').first().click();
+    await page.locator('#editEventTitle').fill('打ち合わせを変更');
+    await page.locator('#editEventForm button[type="submit"]').click();
+    assert.equal(await page.locator('.calendar-event').first().innerText(), '09:30 打ち合わせを変更');
+    await page.reload();
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')));
+    assert.equal(stored.events[0].title, '打ち合わせを変更');
+    await page.locator('nav [data-page="calendar"]').click();
+    await page.evaluate(() => { month = new Date(2026, 0, 31, 12); render(); });
+    await page.locator('#nextMonth').click();
+    assert.equal(await page.locator('h1').innerText(), '2026年 2月');
+
+    await page.locator('nav [data-page="tasks"]').click();
+    const originalStorage = await page.evaluate(() => localStorage.getItem('dayflow-v2'));
+    const alert = page.waitForEvent('dialog').then(dialog => dialog.accept());
+    await page.locator('#importData').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ tasks: [{ title: '壊れたデータ', subtasks: {} }], events: [], notes: [] })) });
+    await alert;
+    assert.equal(await page.evaluate(() => localStorage.getItem('dayflow-v2')), originalStorage);
+    const backup = { tasks: [{ id: 'month-end', title: '月末の確認', due: '2028-01-31', repeat: 'monthly' }], events: stored.events, notes: [] };
+    await page.locator('#importData').setInputFiles({ name: 'valid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)) });
+    assert.equal(await page.locator('[role="dialog"]').isVisible(), true);
+    assert.equal(await page.evaluate(() => localStorage.getItem('dayflow-v2')), originalStorage, '確認前はデータを置き換えない');
+    await page.locator('#confirmImport').click();
+    await page.locator('[data-toggle="month-end"]').check();
+    for (let index = 0; index < 4; index++) {
+      await page.locator('[data-toggle="month-end"]').uncheck();
+      await page.locator('[data-toggle="month-end"]').check();
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')).tasks.length), 1, '完了チェックでタスクを増やさない');
+    }
+    await page.reload();
+    await page.locator('nav [data-page="tasks"]').click();
+    const monthly = await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')).tasks[0]);
+    assert.equal(monthly.id, 'month-end');
+    assert.equal(monthly.done, true);
+    assert.equal(monthly.nextOccurrenceOn, '2028-02-29');
+    assert.equal(monthly.repeatAnchorDay, 31);
+
+    await page.locator('[data-edit="month-end"]').click();
+    await page.locator('#editTitle').fill('編集中のタイトル');
+    await page.locator('#editNote').fill('保存前のメモ');
+    await page.locator('#newSubtask').fill('下書きの項目');
+    await page.locator('#addSubtask').click();
+    assert.equal(await page.locator('#editTitle').inputValue(), '編集中のタイトル');
+    assert.equal(await page.locator('#editNote').inputValue(), '保存前のメモ');
+    await page.locator('#cancelEdit').click();
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')).tasks[0].subtasks.length), 0);
+    await page.locator('[data-edit="month-end"]').click();
+    await page.locator('#editNote').fill('保存するメモ');
+    await page.locator('#newSubtask').fill('保存する項目');
+    await page.locator('#newSubtask').press('Enter');
+    await page.locator('#saveEdit').click();
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')).tasks[0].subtasks[0].title), '保存する項目');
+    await page.locator('#sort').selectOption('name');
+    await page.locator('[data-toggle="month-end"]').uncheck();
+    assert.equal(await page.locator('#sort').inputValue(), 'name');
+    for (const repeat of ['none', 'daily', 'weekly']) {
+      await page.locator('#taskInput').fill(`追加したタスク ${repeat}`);
+      await page.locator('#taskRepeat').selectOption(repeat);
+      await page.locator('#taskForm button[type="submit"]').click();
+      const currentTasks = await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')).tasks);
+      const toggle = page.locator(`[data-toggle="${currentTasks[0].id}"]`);
+      for (let index = 0; index < 3; index++) {
+        await toggle.check();
+        await toggle.uncheck();
+      }
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dayflow-v2')).tasks.length), currentTasks.length);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'タスク画面が横にはみ出さない');
+    await page.locator('[data-edit="month-end"]').click();
+    const dialogBounds = await page.locator('[role="dialog"]').boundingBox();
+    assert.ok(dialogBounds.y >= 0 && dialogBounds.y + dialogBounds.height <= 844, '編集画面がスマートフォンの高さに収まる');
+    if (process.env.DAYFLOW_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.DAYFLOW_SCREENSHOTS, 'task-edit-mobile.png'), fullPage: true });
+    await page.locator('#cancelEdit').click();
+    await page.setViewportSize({ width: 1440, height: 1050 });
+
+    await page.locator('nav [data-page="tools"]').click();
+    await page.locator('[data-tool="qr"]').click();
+    assert.equal(await page.locator('#qrCanvas').isVisible(), true);
+    assert.equal(await page.locator('#qrPlaceholder').isVisible(), false);
+    const payload = '  日本語🙂\n空白と改行  ';
+    await page.locator('#qrText').fill(payload);
+    assert.equal(await page.locator('#downloadQr').isDisabled(), true);
+    await page.locator('#generateQr').click();
+    assert.equal(await page.locator('#downloadQr').isEnabled(), true);
+    assert.equal(await page.locator('#qrCanvas').getAttribute('width'), '280');
+    assert.match(await page.locator('#qrCharacterCount').innerText(), /文字 · \d+バイト/);
+    await page.locator('#qrText').dispatchEvent('compositionstart');
+    assert.equal(await page.locator('#downloadQr').isDisabled(), true);
+    await page.locator('#qrText').dispatchEvent('compositionend');
+    await page.locator('#generateQr').click();
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#downloadQr').click();
+    const download = await downloadPromise;
+    assert.equal(download.suggestedFilename(), 'dayflow-qr.png');
+    const png = fs.readFileSync(await download.path());
+    assert.equal(png.subarray(1, 4).toString(), 'PNG');
+    await page.locator('#qrText').fill('あ'.repeat(800));
+    await page.locator('#generateQr').click();
+    assert.equal(await page.locator('#downloadQr').isDisabled(), true);
+    assert.match(await page.locator('#qrPlaceholder').innerText(), /長すぎます/);
+    await page.locator('#qrLevel').selectOption('L');
+    assert.equal(await page.locator('#downloadQr').isEnabled(), true);
+    await page.locator('#qrText').fill(payload);
+    await page.locator('#generateQr').click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'QR画面が横にはみ出さない');
+    if (process.env.DAYFLOW_SCREENSHOTS) {
+      fs.mkdirSync(process.env.DAYFLOW_SCREENSHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.DAYFLOW_SCREENSHOTS, 'qr-mobile.png'), fullPage: true });
+    }
+    await page.locator('#resetQr').click();
+    assert.equal(await page.locator('#qrCanvas').isVisible(), false);
+    assert.equal(await page.locator('#qrPlaceholder').isVisible(), true);
+
+    await page.locator('nav [data-page="calendar"]').click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'カレンダーはパネル内でスクロールする');
+    if (process.env.DAYFLOW_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.DAYFLOW_SCREENSHOTS, 'calendar-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    if (process.env.DAYFLOW_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.DAYFLOW_SCREENSHOTS, 'calendar-desktop.png'), fullPage: true });
+
+    await page.locator('nav [data-page="focus"]').click();
+    await page.clock.install();
+    await page.locator('#focusTask').fill('ページ外で集中');
+    await page.locator('[data-duration="5"]').click();
+    await page.locator('#timerStart').click();
+    await page.locator('nav [data-page="home"]').click();
+    await page.clock.fastForward(5 * 60 * 1000);
+    await page.locator('nav [data-page="focus"]').click();
+    assert.match(await page.locator('.sessions').innerText(), /5分 · ページ外で集中/);
+    const filePage = await context.newPage();
+    filePage.on('pageerror', error => errors.push(error.message));
+    await filePage.goto(pathToFileURL(path.join(root, 'index.html')).href);
+    await filePage.locator('nav [data-page="tools"]').click();
+    await filePage.locator('[data-tool="qr"]').click();
+    assert.equal(await filePage.locator('#qrCanvas').isVisible(), true, 'index.htmlを直接開いてもQRを生成できる');
+    assert.deepEqual(errors, []);
+    console.log('ブラウザ確認成功: 全繰り返しの完了/取消で件数不変、次回予約の再読み込み、編集下書き・キャンセル・保存・並び順、予定編集、日本語QR・PNG、390px表示、ページ外タイマー完了。');
+  } finally {
+    if (browser) await browser.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });
