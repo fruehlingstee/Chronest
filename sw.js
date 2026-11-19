@@ -5,7 +5,7 @@
 // アプリのファイルを追加したら APP_FILES にも追加する（tests/sw.test.cjs が漏れを検出する）。
 const CACHE_NAME = 'dayflow-shell-v1';
 const APP_FILES = [
-  './', './index.html', './styles.css', './schedule.js', './app.js', './enhancements.js', './tools.js', './install.js',
+  './', './index.html', './styles.css', './schedule.js', './app.js', './enhancements.js', './tools.js', './insights.js', './pages.js', './install.js',
   './vendor/qrcode.js', './manifest.webmanifest',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
 ];

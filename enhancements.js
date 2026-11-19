@@ -103,6 +103,9 @@
     task.nextOccurrenceOn = task.done && !task.repeatRetired ? nextDate(task) : '';
   }
 
+  // 集中画面などほかのファイルからも、繰り返しの次回予約を含めて同じ方法で完了にできるよう公開する。
+  globalThis.dayflowTasks = { setCompleted: setTaskCompleted };
+
   // 旧呼び出しからもタスクが増えないよう、同じ行の次回だけを予約する。
   function spawnRepeat(task) {
     if (!task || !task.done) return;
@@ -224,7 +227,7 @@
       return `<article class="task ${task.done ? 'done' : ''}">
         <input class="check" type="checkbox" data-toggle="${esc(task.id)}" ${task.done ? 'checked' : ''} aria-label="${esc(task.title)}を${task.done ? '未完了に戻す' : '完了にする'}">
         <div><div class="task-title">${esc(task.title)}</div><div class="meta">${meta}</div></div>
-        <div class="task-actions"><button type="button" data-edit="${esc(task.id)}" aria-label="${esc(task.title)}を編集">編集</button></div>
+        <div class="task-actions">${task.done ? '' : `<button type="button" data-focus-task="${esc(task.id)}" aria-label="${esc(task.title)}に集中する">集中</button>`}<button type="button" data-edit="${esc(task.id)}" aria-label="${esc(task.title)}を編集">編集</button></div>
       </article>`;
     }).join('') : '<div class="empty">条件に一致するタスクはありません</div>';
 
@@ -237,6 +240,7 @@
       render();
     });
     document.querySelectorAll('[data-edit]').forEach(button => button.onclick = () => editTask(button.dataset.edit));
+    document.querySelectorAll('[data-focus-task]').forEach(button => button.onclick = () => startFocusTask(button.dataset.focusTask));
   };
 
   editTask = function (id) {
@@ -544,6 +548,9 @@
     });
     fields.title.focus();
   }
+
+  // タイムライン表示（pages.js）が、選択中の日付を使えるよう公開する。
+  globalThis.dayflowCalendar = { selectedDay: () => selectedDay, select: key => selectCalendarDay(key) };
 
   calendar = function () {
     const year = month.getFullYear(), currentMonth = month.getMonth();

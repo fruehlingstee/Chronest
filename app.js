@@ -114,7 +114,7 @@ function normalizeData(input, options = {}) {
       };
     }),
     notes: collection('notes', true, item => typeof item.body === 'string', item => ({ id: id(item.id), body: item.body, pinned: Boolean(item.pinned), created: created(item.created) })),
-    sessions: collection('sessions', false, item => isDateKey(item.date) && typeof item.minutes === 'number' && Number.isFinite(item.minutes) && item.minutes > 0 && (!strict || optionalString(item, 'task')), item => ({ date: item.date, minutes: item.minutes, task: text(item.task) })),
+    sessions: collection('sessions', false, item => isDateKey(item.date) && typeof item.minutes === 'number' && Number.isFinite(item.minutes) && item.minutes > 0 && (!strict || optionalString(item, 'task')), item => ({ date: item.date, minutes: item.minutes, task: text(item.task), taskId: (typeof item.taskId === 'number' && Number.isFinite(item.taskId)) || (typeof item.taskId === 'string' && /^[\w.-]+$/.test(item.taskId)) ? item.taskId : '' })),
     bookmarks: collection('bookmarks', false, item => typeof item.url === 'string' && Boolean(bookmarkUrl(item.url)) && (!strict || (optionalString(item, 'title') && (item.tags === undefined || (Array.isArray(item.tags) && item.tags.every(tag => typeof tag === 'string'))))), item => ({ id: id(item.id), title: text(item.title), url: bookmarkUrl(item.url), tags: (Array.isArray(item.tags) ? item.tags : []).filter(tag => typeof tag === 'string'), created: created(item.created) })),
     calculatorHistory: collection('calculatorHistory', false, item => typeof item.expression === 'string' && typeof item.result === 'string', item => ({ expression: item.expression, result: item.result })).slice(0, 10)
   };
@@ -168,24 +168,37 @@ function showAppNotification(body, tag = '') {
   fallback();
 }
 const dayKey=d=>`${String(d.getFullYear()).padStart(4,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`, jp=d=>new Intl.DateTimeFormat('ja-JP',{month:'long',day:'numeric',weekday:'short'}).format(d);
-function shell(content){return `<div class="app"><header class="header"><div class="brand"><b>▸</b> DAYFLOW</div><nav class="nav" aria-label="メインナビゲーション">${[['home','ホーム'],['tasks','TASKS'],['calendar','CALENDAR'],['notes','NOTES'],['focus','FOCUS'],['tools','TOOLS']].map(x=>`<button class="${page===x[0]?'active':''}" data-page="${x[0]}" ${page===x[0]?'aria-current="page"':''}>${x[1]}</button>`).join('')}</nav><div class="today">${jp(new Date())}</div></header><p id="storageNotice" role="status" ${storageWarning?'':'hidden'}>${esc(storageWarning)}</p>${content}</div>`}
-function render(){let c=page==='home'?home():page==='tasks'?tasks():page==='calendar'?calendar():page==='notes'?notes():page==='tools'?toolbox():focus();$('#app').innerHTML=shell(c);document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;render()});bind()}
+function shell(content){return `<div class="app"><header class="header"><div class="brand"><b>▸</b> DAYFLOW</div><nav class="nav" aria-label="メインナビゲーション">${[['home','ホーム'],['tasks','TASKS'],['calendar','CALENDAR'],['notes','NOTES'],['focus','FOCUS'],['stats','STATS'],['tools','TOOLS']].map(x=>`<button class="${page===x[0]?'active':''}" data-page="${x[0]}" ${page===x[0]?'aria-current="page"':''}>${x[1]}</button>`).join('')}</nav><div class="today">${jp(new Date())}</div></header><p id="storageNotice" role="status" ${storageWarning?'':'hidden'}>${esc(storageWarning)}</p>${content}</div>`}
+// 統計ページは pages.js が上書きする。読み込めなかった場合はホームを表示する。
+function stats(){return home()}
+function render(){let c=page==='home'?home():page==='tasks'?tasks():page==='calendar'?calendar():page==='notes'?notes():page==='tools'?toolbox():page==='stats'?stats():focus();$('#app').innerHTML=shell(c);document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;render()});bind()}
 function home(){let open=data.tasks.filter(t=>!t.done), today=dayKey(new Date()), events=data.events.filter(e=>eventOccursOn(e,today));return `<main class="page"><div class="page-head"><div><p class="kicker">PERSONAL COMMAND CENTER</p><h1 class="sr-only">ホーム</h1></div></div><section class="grid">${[['tasks','01','✓','タスク',open.length+' 件の未完了'],['calendar','02','▦','カレンダー',events.length?'今日の予定 '+events.length+' 件':'予定を追加'],['notes','03','✦','クイックメモ','思いつきを残す'],['focus','04','◷','集中','25分のポモドーロ'],['tools','05','⌘','便利ツール','4つの道具をひとつに']].map(x=>`<button class="card" data-page="${x[0]}"><span class="n">${x[1]}</span><span class="ico">${x[2]}</span><strong>${x[3]}</strong><span>${x[4]}</span></button>`).join('')}</section><section class="two-col" style="margin-top:14px"><div class="panel"><h3>NEXT TASK</h3>${open.slice(0,4).map(t=>`<div class="quick">${esc(t.title)}${t.due?` <span class="tag">· ${t.due}</span>`:''}</div>`).join('')||'<div class="empty">次のタスクはありません</div>'}</div><div class="panel"><h3>TODAY</h3>${events.map(e=>`<div class="quick">${esc(eventTimeLabel(e,today))} · ${esc(e.title)}</div>`).join('')||'<div class="empty">予定はありません</div>'}</div></section></main>`}
 function tasks(){const total=data.tasks.length,done=data.tasks.filter(t=>t.done).length,over=data.tasks.filter(t=>!t.done&&t.due&&t.due<dayKey(new Date())).length;return `<main class="page"><div class="page-head"><div><p class="kicker">01 / TASKS</p><h1 class="title">タスク</h1></div></div><section class="stats"><div class="stat"><b>${total}</b><span>合計</span></div><div class="stat"><b>${total-done}</b><span>未完了</span></div><div class="stat"><b>${done}</b><span>完了</span></div><div class="stat"><b style="color:${over?'var(--red)':'var(--text)'}">${over}</b><span>期限超過</span></div></section><form class="toolbar" id="addTask"><input class="input" id="taskName" required maxlength="120" placeholder="新しいタスクを入力…"><select class="select" id="taskPriority"><option value="high">● 高</option><option value="medium" selected>● 中</option><option value="low">● 低</option></select><input class="select" id="taskDue" type="date"><button class="button">追加</button></form><div class="toolbar"><input class="input" id="search" value="${esc(query)}" placeholder="⌕ タスク・メモを検索"><select class="select" id="sort"><option value="created">追加順</option><option value="due">期限日順</option><option value="priority">優先度順</option><option value="name">名前順</option></select></div><div class="filters">${[['all','すべて'],['open','未完了'],['done','完了済み'],['overdue','期限超過']].map(x=>`<button class="filter ${filter===x[0]?'active':''}" data-filter="${x[0]}">${x[1]}</button>`).join('')}</div><section class="panel" style="border-top:0;border-radius:0 0 6px 6px" id="taskList"></section></main>`}
 function getTasks(){let a=data.tasks.filter(t=>(filter==='all'||filter==='open'&&!t.done||filter==='done'&&t.done||filter==='overdue'&&!t.done&&t.due&&t.due<dayKey(new Date()))&&((t.title+t.note).toLowerCase().includes(query.toLowerCase())));let s=$('#sort')?.value||'created', rank={high:0,medium:1,low:2};return a.sort((a,b)=>s==='name'?a.title.localeCompare(b.title,'ja'):s==='priority'?rank[a.priority]-rank[b.priority]:s==='due'?(a.due||'9999').localeCompare(b.due||'9999'):new Date(b.created)-new Date(a.created))}
 function drawTasks(){let a=getTasks();$('#taskList').innerHTML=a.length?a.map(t=>`<article class="task ${t.done?'done':''}"><input class="check" type="checkbox" data-toggle="${t.id}" ${t.done?'checked':''} aria-label="完了"><div><div class="task-title">${esc(t.title)}</div><div class="meta"><span class="tag">● ${t.priority==='high'?'高':t.priority==='medium'?'中':'低'}</span>${t.due?`<span>${t.due}${!t.done&&t.due<dayKey(new Date())?' · 期限超過':''}</span>`:''}${t.note?`<span>▹ メモあり</span>`:''}</div></div><div class="task-actions"><button data-edit="${t.id}">編集</button></div></article>`).join(''):'<div class="empty">条件に一致するタスクはありません</div>';document.querySelectorAll('[data-toggle]').forEach(x=>x.onchange=()=>{let t=data.tasks.find(t=>t.id==x.dataset.toggle);t.done=x.checked;save();render()});document.querySelectorAll('[data-edit]').forEach(x=>x.onclick=()=>editTask(x.dataset.edit))}
 function calendar(){let y=month.getFullYear(),m=month.getMonth(),first=new Date(y,m,1),start=first.getDay(),max=new Date(y,m+1,0).getDate(),cells=['日','月','火','水','木','金','土'].map(d=>`<div class="dayname">${d}</div>`);for(let i=0;i<start;i++)cells.push('<div class="day"></div>');for(let d=1;d<=max;d++){let k=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;cells.push(`<div class="day ${k===dayKey(new Date())?'today':''}"><b>${d}</b>${data.events.filter(e=>eventOccursOn(e,k)).map(e=>`<div class="event" title="${esc(e.title)}">${esc(eventTimeLabel(e,k))} ${esc(e.title)}</div>`).join('')}</div>`)}return `<main class="page"><div class="page-head"><div><p class="kicker">02 / CALENDAR</p><h1 class="title">${y}年 ${m+1}月</h1></div><div><button class="ghost" data-prev>← 前月</button><button class="ghost" data-next>次月 →</button></div></div><form class="toolbar" id="addEvent"><input class="select" id="eventDate" type="date" value="${dayKey(new Date())}" required><input class="select" id="eventTime" type="time"><input class="input" id="eventTitle" required placeholder="予定のタイトル"><button class="button">予定を追加</button></form><section class="panel" style="padding:0;overflow:auto"><div class="calendar">${cells.join('')}</div></section><section class="panel" style="margin-top:14px"><h3>予定を管理</h3>${data.events.sort((a,b)=>a.date.localeCompare(b.date)).map(e=>`<div class="quick">${e.date} ${e.time||'終日'} · ${esc(e.title)} <button class="ghost" data-event-delete="${e.id}">削除</button></div>`).join('')||'<div class="empty">予定はまだありません</div>'}</section></main>`}
 function notes(){let pins=data.notes.filter(n=>n.pinned), others=data.notes.filter(n=>!n.pinned);return `<main class="page"><div class="page-head"><div><p class="kicker">03 / QUICK NOTES</p><h1 class="title">メモ</h1></div></div><section class="panel"><textarea id="noteBody" rows="5" placeholder="いま考えていること…"></textarea><div class="toolbar" style="margin-bottom:0"><button class="button" id="saveNote">メモを保存</button><span class="subtitle">ピン留めしたメモは先頭に表示されます。</span></div></section><section class="notes" style="margin-top:14px">${[...pins,...others].map(n=>`<article class="note ${n.pinned?'pinned':''}">${esc(n.body)}<small>${n.pinned?'★ PINNED · ':''}${new Date(n.created).toLocaleDateString('ja-JP')} <button class="ghost" data-pin="${n.id}">${n.pinned?'ピン解除':'ピン留め'}</button> <button class="ghost" data-note-delete="${n.id}">削除</button></small></article>`).join('')||'<div class="empty">メモはまだありません</div>'}</section></main>`}
-let focusDuration=1500, focusTaskName='', focusEndAt=0;
+let focusDuration=1500, focusTaskName='', focusEndAt=0, focusTaskId='', focusFinishedTaskId='';
+const focusTask=id=>id===''?null:data.tasks.find(task=>String(task.id)===String(id))||null;
+// タスク一覧やダッシュボードの「集中」ボタンから、そのタスクを選んだ状態で集中画面を開く。
+function startFocusTask(id) {
+  const task=focusTask(id);
+  if (!task) return;
+  if (interval===null) { focusTaskId=task.id; focusTaskName=task.title; focusFinishedTaskId=''; }
+  page='focus';
+  render();
+}
 const formatTimer=seconds=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
 function focus() {
   if (interval !== null) timer = Math.max(0, Math.ceil((focusEndAt - Date.now()) / 1000));
   return `<main class="page"><section class="panel focus"><h1 class="sr-only">集中</h1>
-    <div class="toolbar" style="justify-content:center"><input class="input" style="max-width:340px" id="focusTask" maxlength="120" aria-label="集中する作業" value="${esc(focusTaskName)}" placeholder="何に集中しますか？"></div>
+    <div class="toolbar focus-task-picker" style="justify-content:center"><select class="select" id="focusTaskSelect" aria-label="集中するタスク" ${interval!==null?'disabled':''}><option value="">タスクを選ばずに集中</option>${data.tasks.filter(task=>!task.done||String(task.id)===String(focusTaskId)).map(task=>`<option value="${esc(task.id)}" ${String(task.id)===String(focusTaskId)?'selected':''}>${esc(task.title)}</option>`).join('')}</select><input class="input" style="max-width:340px" id="focusTask" maxlength="120" aria-label="集中する作業" value="${esc(focusTaskName)}" placeholder="何に集中しますか？"></div>
+    ${focusTask(focusTaskId)?`<p class="focus-linked">このタスクの集中 合計 ${focusMinutesByTask(data.sessions).get(String(focusTaskId))||0}分</p>`:''}
+    ${focusTask(focusFinishedTaskId)&&!focusTask(focusFinishedTaskId).done?`<div class="focus-finished" role="status"><span>お疲れさまでした。「${esc(focusTask(focusFinishedTaskId).title)}」は終わりましたか？</span><button class="button" id="focusCompleteTask">タスクを完了にする</button></div>`:''}
     <div class="timer" id="timer" role="timer" aria-label="残り時間">${formatTimer(timer)}</div>
     <div class="toolbar" style="justify-content:center">${[25,50,5].map(minutes=>`<button class="ghost" data-duration="${minutes}" aria-pressed="${focusDuration===minutes*60}">${minutes}分</button>`).join('')}
     <button class="button" id="timerStart">${interval!==null?'一時停止':timer>0&&timer<focusDuration?'再開':'開始'}</button><button class="button dim" id="timerReset">リセット</button></div>
-    <div class="sessions"><h3>今日の集中記録</h3>${data.sessions.filter(session=>session.date===dayKey(new Date())).map(session=>`<div class="session">✓ ${session.minutes}分 · ${esc(session.task||'名称なし')}</div>`).join('')||'<div class="empty">まだ集中セッションはありません</div>'}</div>
+    <div class="sessions"><h3>今日の集中記録</h3>${data.sessions.filter(session=>session.date===dayKey(new Date())).map(session=>`<div class="session">✓ ${session.minutes}分 · ${esc(session.task||'名称なし')}${focusTask(session.taskId)?' <span class="tag">タスク</span>':''}</div>`).join('')||'<div class="empty">まだ集中セッションはありません</div>'}</div>
   </section></main>`;
 }
 function updateFocusTimer() {
@@ -196,7 +209,8 @@ function updateFocusTimer() {
   if (timer > 0) return;
   clearInterval(interval);
   interval = null;
-  data.sessions.unshift({date:dayKey(new Date(focusEndAt)),minutes:focusDuration/60,task:focusTaskName.trim()});
+  data.sessions.unshift({date:dayKey(new Date(focusEndAt)),minutes:focusDuration/60,task:focusTaskName.trim(),taskId:focusTask(focusTaskId)?focusTaskId:''});
+  focusFinishedTaskId=focusTask(focusTaskId)?focusTaskId:'';
   save();
   try {
     if ('Notification' in window && Notification.permission === 'granted') showAppNotification('集中セッションが完了しました。', 'focus');
@@ -204,7 +218,23 @@ function updateFocusTimer() {
   if (page === 'focus') render();
 }
 function bindFocus() {
-  $('#focusTask').oninput=event=>{focusTaskName=event.target.value;};
+  $('#focusTask').oninput=event=>{
+    focusTaskName=event.target.value;
+    // タスク名と違う内容を書いたら、タスクとの連携を外す。
+    if (focusTask(focusTaskId) && focusTaskName.trim()!==focusTask(focusTaskId).title) { focusTaskId=''; const select=$('#focusTaskSelect'); if (select) select.value=''; }
+  };
+  const taskSelect=$('#focusTaskSelect');
+  if (taskSelect) taskSelect.onchange=()=>{ const task=focusTask(taskSelect.value); focusTaskId=task?task.id:''; focusTaskName=task?task.title:''; focusFinishedTaskId=''; render(); };
+  const completeButton=$('#focusCompleteTask');
+  if (completeButton) completeButton.onclick=()=>{
+    const task=focusTask(focusFinishedTaskId);
+    if (task) {
+      // 繰り返しタスクの次回予約などはタスク画面と同じ処理に任せる。
+      if (globalThis.dayflowTasks) globalThis.dayflowTasks.setCompleted(task,true); else { task.done=true; }
+      save();
+    }
+    focusFinishedTaskId=''; render();
+  };
   document.querySelectorAll('[data-duration]').forEach(button=>button.onclick=()=>{
     clearInterval(interval); interval=null;
     focusDuration=Number(button.dataset.duration)*60;

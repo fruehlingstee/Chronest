@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = [], notificationPermission } = {}) {
+function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = [], notificationPermission, withPages = false } = {}) {
   const nodes = new Map();
   let buttons = [];
   const unescape = value => value.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -85,6 +85,8 @@ function calendarHarness({ date = '2026-01-31T12:00:00', events = [], tasks = []
   // 予定の日付計算（schedule.js）を先に読み込む。ブラウザでの読み込み順と同じ。
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'schedule.js'), 'utf8'), context);
   vm.runInNewContext(exposed, context);
+  // タイムライン表示を確かめるときは、ブラウザと同じ順で insights.js と pages.js も読み込む。
+  if (withPages) for (const file of ['insights.js', 'pages.js']) vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   return { context, nodes, submit: () => nodes.get('#eventForm').onsubmit({ preventDefault() {} }) };
 }
 
@@ -603,4 +605,43 @@ test('作成・編集で選んだ色を保存し、入力中の色は見出し�
   nodes.get('#editEventColor').value = 'unknown';
   nodes.get('#editEventForm').onsubmit({ preventDefault() {} });
   assert.equal(event.color, '', '一覧に無い色は自動として保存する');
+});
+
+test('カレンダーは月・週・3日・1日を切り替えられ、週表示では時刻つき予定を時間の位置に置く', () => {
+  const events = [
+    { id: 'morning', date: '2026-11-19', endDate: '2026-11-19', title: '朝会', time: '09:30', repeat: 'none', exceptions: [] },
+    { id: 'trip', date: '2026-11-18', endDate: '2026-11-20', title: '出張', time: '', repeat: 'none', exceptions: [], color: 'purple' }
+  ];
+  const tasks = [{ id: 'due', title: '提出物', due: '2026-11-21', done: false, subtasks: [] }];
+  const { context } = calendarHarness({ date: '2026-11-19T12:00:00', events, tasks, withPages: true });
+  assert.match(context.html, /data-calendar-view="month" aria-pressed="true"/);
+  assert.match(context.html, /class="panel calendar-panel"/);
+  context.document.querySelector('[data-calendar-view="week"]').onclick();
+  const html = context.html;
+  assert.doesNotMatch(html, /class="panel calendar-panel"/, '週表示では月のマス目の代わりにタイムラインを出す');
+  assert.match(html, /class="panel timeline-panel"/);
+  assert.deepEqual([...html.matchAll(/class="timeline-day[^"]*" data-calendar-select="([^"]+)"/g)].map(match => match[1]), ['2026-11-15', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21']);
+  assert.match(html, /class="timeline-event event-color-blue" data-event-edit="morning" data-event-date="2026-11-19" style="top:418px;/, '9:30 は 9.5時間 × 44px の位置');
+  const timeline = html.split('class="panel timeline-panel"')[1].split('</section>')[0];
+  assert.equal((timeline.match(/data-event-edit="trip"/g) || []).length, 3, '3日間の予定は終日の段に毎日表示する');
+  assert.match(html, /timeline-chip event-color-purple/);
+  assert.match(html, /data-calendar-task="due"/);
+  assert.match(html, /data-calendar-select="2026-11-12" aria-label="前の期間"/);
+  context.document.querySelector('[data-calendar-select="2026-11-26"]').onclick();
+  assert.equal(context.calendarTest.getState().selectedDay, '2026-11-26', '次の週へ移動する');
+  context.document.querySelector('[data-calendar-view="day"]').onclick();
+  assert.equal((context.html.match(/class="timeline-day/g) || []).length, 1);
+  context.document.querySelector('[data-calendar-view="3day"]').onclick();
+  assert.equal((context.html.match(/class="timeline-day/g) || []).length, 3);
+  context.document.querySelector('[data-calendar-view="month"]').onclick();
+  assert.match(context.html, /class="panel calendar-panel"/);
+});
+
+test('タイムライン上の予定を押すと、その回の編集画面を開ける', () => {
+  const events = [{ id: 'weekly', date: '2026-11-05', endDate: '2026-11-05', title: '授業', time: '13:00', repeat: 'weekly', repeatUntil: '', exceptions: [] }];
+  const { context, nodes } = calendarHarness({ date: '2026-11-19T12:00:00', events, withPages: true });
+  context.document.querySelector('[data-calendar-view="day"]').onclick();
+  context.document.querySelector('[data-event-edit="weekly"]').onclick();
+  assert.ok(nodes.get('#deleteEventOccurrence'), '繰り返しの回として開く');
+  assert.equal(nodes.get('#editEventTitle').value, '授業');
 });
