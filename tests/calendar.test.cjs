@@ -372,6 +372,17 @@ test('日付セルの表示上限を超えた予定も選択日の一覧で全�
   assert.equal((agenda.match(/data-event-edit=/g) || []).length, 5);
 });
 
+test('狭い画面用の印は予定名とタスク名を1件ずつ文字で並べ、3件を超えた分は件数で示す', () => {
+  const events = Array.from({ length: 3 }, (_, index) => ({ id: 'event-' + index, date: '2026-01-15', endDate: '2026-01-15', title: index === 0 ? '<b>会議</b>の準備をする' : '予定' + index, time: '' }));
+  const tasks = [{ id: 'due', title: '提出物', due: '2026-01-15', done: false, subtasks: [] }];
+  const { context } = calendarHarness({ events, tasks });
+  const markers = calendarDay(context.html, '2026-01-15').split('calendar-day-markers')[1].split('</div>')[0];
+  const labels = [...markers.matchAll(/<span class="calendar-mark ([^"]*)">([^<]*)<\/span>/g)].map(match => match[2]);
+  assert.deepEqual(labels, ['&lt;b&gt;会議&lt;/b&gt;の準備をする', '予定1', '予定2'], '予定名は文字として（HTMLとして解釈せずに）表示する');
+  assert.match(markers, /calendar-marker-count">\+1</, '4件目のタスク期限は件数で示す');
+  assert.match(calendarDay(context.html, '2026-01-16'), /class="calendar-day-markers" aria-hidden="true"><\/div>/, '予定のない日は何も並べない');
+});
+
 function selectedAgenda(html) {
   return html.split('aria-labelledby="selectedDayHeading"')[1].split('</section>')[0];
 }
@@ -580,7 +591,7 @@ test('色が自動の予定は1日を青・期間を緑で表示し、選んだ�
   for (const day of ['20', '21', '22']) {
     const cell = calendarDay(context.html, '2026-01-' + day);
     assert.match(cell, /event-color-purple[^"]*" data-event-edit="purple-range"/);
-    assert.match(cell, /calendar-dot range-dot colored-dot event-color-purple/);
+    assert.match(cell, /calendar-mark range-mark colored-mark event-color-purple">紫の期間</);
   }
   assert.match(monthAgenda(context.html), /event-swatch event-color-purple/);
 });

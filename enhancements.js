@@ -637,16 +637,18 @@
         const fullLabel = [rangeLabel(occurrence), event.time ? `開始 ${event.time}` : '終日', phaseLabel[phase], repeatText, event.title].filter(Boolean).join(' ') + (event.location ? `（${event.location}）` : '');
         const color = eventColor(event, occurrence);
         return {
-          kind: multiDay ? 'range' : 'event', color,
+          kind: multiDay ? 'range' : 'event', color, title: event.title,
           html: `<button type="button" class="event calendar-event colored-event event-color-${color} event-range-${phase} ${multiDay ? 'is-multi-day' : ''}" data-event-edit="${esc(event.id)}" data-event-date="${esc(occurrence.start)}" title="${esc(fullLabel)}" aria-label="${esc(fullLabel)}を編集">${multiDay ? `<span class="event-phase">${phaseLabel[phase]}</span>` : ''}<span class="calendar-event-title">${['single', 'start'].includes(phase) ? esc(event.time || '終日') + ' ' : ''}${repeatText ? '<span class="event-repeat-mark" aria-hidden="true">↻</span>' : ''}${esc(event.title)}</span></button>`
         };
       }).concat(dayTasks.map(task => ({
-        kind: 'task',
+        kind: 'task', title: task.title,
         html: `<button type="button" class="event task-event calendar-event" data-calendar-task="${esc(task.id)}" title="期限 ${esc(task.title)}" aria-label="タスク ${esc(task.title)}を編集"><span class="calendar-event-title">期限 ${esc(task.title)}</span></button>`
       })));
+      // 狭い画面では、予定名を1件1行の文字で並べる（入りきらない分は切り落として最初の数文字だけ見せる）。
+      // 小さな文字は押しにくいので、押す操作はセル全体に広げた日付ボタンに任せ、ここは読み上げない飾りにする。
       cells.push(`<div class="day ${key === todayKey() ? 'today' : ''} ${key === selectedDay ? 'selected-day' : ''}">
         <button type="button" class="calendar-date" data-calendar-day="${key}" aria-label="${year}年${currentMonth + 1}月${day}日、予定${dayEvents.length}件、タスク期限${dayTasks.length}件" aria-pressed="${key === selectedDay}" ${key === todayKey() ? 'aria-current="date"' : ''}>${day}</button>
-        <div class="calendar-day-markers" aria-hidden="true">${dayItems.slice(0, 3).map(item => `<span class="calendar-dot ${item.kind}-dot${item.color ? ` colored-dot event-color-${item.color}` : ''}"></span>`).join('')}${dayItems.length > 3 ? `<span class="calendar-marker-count">+${dayItems.length - 3}</span>` : ''}</div>
+        <div class="calendar-day-markers" aria-hidden="true">${dayItems.slice(0, 3).map(item => `<span class="calendar-mark ${item.kind}-mark${item.color ? ` colored-mark event-color-${item.color}` : ''}">${esc(item.title)}</span>`).join('')}${dayItems.length > 3 ? `<span class="calendar-marker-count">+${dayItems.length - 3}</span>` : ''}</div>
         ${dayItems.slice(0, 3).map(item => item.html).join('')}
         ${dayItems.length > 3 ? `<button type="button" class="calendar-more" data-calendar-select="${key}" aria-label="${key}のすべての予定とタスク期限を表示">+${dayItems.length - 3}件</button>` : ''}
       </div>`);
