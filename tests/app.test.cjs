@@ -5,13 +5,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 // ブラウザや追加パッケージなしで、保存処理と時計の実際の振る舞いを確認する。
-function createApp({ stored, blockedStorage = false, failWrites = false, now = '2026-11-19T12:00:00+09:00' } = {}) {
-  const storage = new Map(stored === undefined ? [] : [['dayflow-v2', stored]]);
+function createApp({ stored, preferences = {}, blockedStorage = false, failWrites = false, now = '2026-11-19T12:00:00+09:00' } = {}) {
+  const storage = new Map([...(stored === undefined ? [] : [['dayflow-v2', stored]]), ...Object.entries(preferences)]);
   const nodes = new Map();
   const timers = new Map();
   let clock = new Date(now).getTime();
   let timerId = 0;
-  let durationButtons = [];
   const element = () => ({ value: '', textContent: '', hidden: false, focus() {}, setAttribute() {} });
   const root = element();
   Object.defineProperty(root, 'innerHTML', {
@@ -19,14 +18,12 @@ function createApp({ stored, blockedStorage = false, failWrites = false, now = '
     set(markup) {
       this.markup = markup;
       for (const key of nodes.keys()) if (key !== '#app' && key !== '#modal-root') nodes.delete(key);
-      durationButtons = [];
       for (const [, attributes] of markup.matchAll(/<[a-z]+\b([^>]*)>/gi)) {
         const id = attributes.match(/\bid="([^"]*)"/);
         const node = element();
         node.value = attributes.match(/\bvalue="([^"]*)"/)?.[1] || '';
+        node.disabled = /\sdisabled\b/.test(attributes);
         if (id) nodes.set('#' + id[1], node);
-        const duration = attributes.match(/\bdata-duration="([^"]*)"/);
-        if (duration) { node.dataset = { duration: duration[1] }; durationButtons.push(node); }
       }
     }
   });
@@ -40,7 +37,7 @@ function createApp({ stored, blockedStorage = false, failWrites = false, now = '
     Date: ClockDate, URL, console,
     document: {
       querySelector: selector => nodes.get(selector) || null,
-      querySelectorAll: selector => selector === '[data-duration]' ? durationButtons : []
+      querySelectorAll: () => []
     },
     localStorage: {
       getItem(key) { if (blockedStorage) throw new Error('blocked'); return storage.get(key) ?? null; },
@@ -57,7 +54,8 @@ function createApp({ stored, blockedStorage = false, failWrites = false, now = '
     node: selector => nodes.get(selector),
     advance(ms) { clock += ms; for (const { callback } of [...timers.values()]) callback(); },
     storage, timers,
-    durationButton(minutes) { return durationButtons.find(button => button.dataset.duration === String(minutes)); }
+    // 集中する時間の入力欄に値を打ち込む（event: 'input' は入力中、'change' は入力欄から離れたとき）。
+    typeFocusMinutes(value, event = 'input') { const input = nodes.get('#focusMinutes'); input.value = value; input['on' + event](); return input; }
   };
 }
 
@@ -336,7 +334,7 @@ test('focus pause and resume use remaining time and retain the task name', () =>
 test('reset restores the selected focus duration and cancels the active timer', () => {
   const app = createApp();
   app.run("page='focus'; render()");
-  app.durationButton(50).onclick();
+  app.typeFocusMinutes('50');
   app.node('#timerStart').onclick();
   app.advance(15000);
   app.node('#timerReset').onclick();
@@ -344,6 +342,58 @@ test('reset restores the selected focus duration and cancels the active timer', 
   assert.equal(app.run('interval'), null);
   assert.equal(app.timers.size, 0);
   assert.equal(app.run('data.sessions.length'), 0);
+});
+
+test('自分で入力した分数で集中でき、その分数が記録され、次に開いたときも覚えている', () => {
+  const app = createApp();
+  app.run("page='focus'; render()");
+  app.typeFocusMinutes('40');
+  assert.equal(app.run('timer'), 2400);
+  assert.equal(app.node('#timer').textContent, '40:00', '画面を作り直さずにタイマー表示が変わる');
+  app.node('#timerStart').onclick();
+  assert.equal(app.node('#focusMinutes').disabled, true, '計測中は時間を変えられない');
+  app.advance(40 * 60 * 1000);
+  assert.equal(app.run('data.sessions[0].minutes'), 40);
+  assert.equal(app.storage.get('dayflow-focus-minutes'), '40');
+
+  const reopened = createApp({ preferences: { 'dayflow-focus-minutes': '40' } });
+  reopened.run("page='focus'; render()");
+  assert.equal(reopened.run('timer'), 2400);
+  assert.equal(reopened.node('#focusMinutes').value, '40');
+});
+
+test('集中する時間は入力途中の値では変えず、入力欄を離れたときに1〜180分の整数へそろえる', () => {
+  const app = createApp();
+  app.run("page='focus'; render()");
+  for (const typing of ['', '0', '2.5', '999']) {
+    app.typeFocusMinutes(typing);
+    assert.equal(app.run('timer'), 1500, `入力途中の「${typing}」ではタイマーを変えない`);
+  }
+  for (const [typed, expected] of [['999', '180'], ['0', '1'], ['2.5', '3'], ['', '3'], ['abc', '3']]) {
+    const input = app.typeFocusMinutes(typed, 'change');
+    assert.equal(input.value, expected, `「${typed}」は「${expected}」分にそろえる`);
+    assert.equal(app.run('focusDuration'), Number(expected) * 60);
+  }
+  // 保存された値が壊れていても、範囲内に直すか既定の25分で始める。
+  assert.equal(createApp({ preferences: { 'dayflow-focus-minutes': '500' } }).run('focusDuration'), 180 * 60);
+  assert.equal(createApp({ preferences: { 'dayflow-focus-minutes': 'x' } }).run('focusDuration'), 25 * 60);
+  assert.equal(createApp({ blockedStorage: true }).run('focusDuration'), 25 * 60);
+});
+
+test('一時停止中に時間を変えると、新しい時間で最初からやり直す', () => {
+  const app = createApp();
+  app.run("page='focus'; render()");
+  app.node('#timerStart').onclick();
+  app.advance(10000);
+  app.node('#timerStart').onclick();
+  assert.match(app.node('#app').innerHTML, />再開<\/button>/);
+  assert.equal(app.node('#focusMinutes').disabled, false, '一時停止中は時間を変えられる');
+  app.typeFocusMinutes('10');
+  assert.equal(app.run('timer'), 600);
+  assert.equal(app.node('#timerStart').textContent, '開始');
+  app.node('#timerStart').onclick();
+  app.advance(10 * 60 * 1000);
+  assert.equal(app.run('data.sessions[0].minutes'), 10);
 });
 
 test('event end times survive reload, and invalid end times are rejected as a backup and recovered without them', () => {

@@ -184,7 +184,7 @@ function shell(content){return `<div class="app"><header class="header"><div cla
 // 統計ページは pages.js が上書きする。読み込めなかった場合はホームを表示する。
 function stats(){return home()}
 function render(){let c=page==='home'?home():page==='tasks'?tasks():page==='calendar'?calendar():page==='notes'?notes():page==='tools'?toolbox():page==='stats'?stats():focus();$('#app').innerHTML=shell(c);document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;render()});bind()}
-function home(){let open=data.tasks.filter(t=>!t.done), today=dayKey(new Date()), events=data.events.filter(e=>eventOccursOn(e,today));return `<main class="page"><div class="page-head"><div><p class="kicker">PERSONAL COMMAND CENTER</p><h1 class="sr-only">HOME</h1></div></div><section class="grid">${[['tasks','01','✓','タスク',open.length+' 件の未完了'],['calendar','02','▦','カレンダー',events.length?'今日の予定 '+events.length+' 件':'予定を追加'],['notes','03','✦','クイックメモ','思いつきを残す'],['focus','04','◷','集中','25分のポモドーロ'],['tools','05','⌘','便利ツール','4つの道具をひとつに']].map(x=>`<button class="card" data-page="${x[0]}"><span class="n">${x[1]}</span><span class="ico">${x[2]}</span><strong>${x[3]}</strong><span>${x[4]}</span></button>`).join('')}</section><section class="two-col" style="margin-top:14px"><div class="panel"><h3>NEXT TASK</h3>${open.slice(0,4).map(t=>`<div class="quick">${esc(t.title)}${t.due?` <span class="tag">· ${t.due}</span>`:''}</div>`).join('')||'<div class="empty">次のタスクはありません</div>'}</div><div class="panel"><h3>TODAY</h3>${events.map(e=>`<div class="quick">${esc(eventTimeLabel(e,today))} · ${esc(e.title)}</div>`).join('')||'<div class="empty">予定はありません</div>'}</div></section></main>`}
+function home(){let open=data.tasks.filter(t=>!t.done), today=dayKey(new Date()), events=data.events.filter(e=>eventOccursOn(e,today));return `<main class="page"><div class="page-head"><div><p class="kicker">PERSONAL COMMAND CENTER</p><h1 class="sr-only">HOME</h1></div></div><section class="grid">${[['tasks','01','✓','タスク',open.length+' 件の未完了'],['calendar','02','▦','カレンダー',events.length?'今日の予定 '+events.length+' 件':'予定を追加'],['notes','03','✦','クイックメモ','思いつきを残す'],['focus','04','◷','集中','好きな時間でポモドーロ'],['tools','05','⌘','便利ツール','4つの道具をひとつに']].map(x=>`<button class="card" data-page="${x[0]}"><span class="n">${x[1]}</span><span class="ico">${x[2]}</span><strong>${x[3]}</strong><span>${x[4]}</span></button>`).join('')}</section><section class="two-col" style="margin-top:14px"><div class="panel"><h3>NEXT TASK</h3>${open.slice(0,4).map(t=>`<div class="quick">${esc(t.title)}${t.due?` <span class="tag">· ${t.due}</span>`:''}</div>`).join('')||'<div class="empty">次のタスクはありません</div>'}</div><div class="panel"><h3>TODAY</h3>${events.map(e=>`<div class="quick">${esc(eventTimeLabel(e,today))} · ${esc(e.title)}</div>`).join('')||'<div class="empty">予定はありません</div>'}</div></section></main>`}
 function tasks(){const total=data.tasks.length,done=data.tasks.filter(t=>t.done).length,over=data.tasks.filter(t=>!t.done&&t.due&&t.due<dayKey(new Date())).length;return `<main class="page"><div class="page-head"><div><p class="kicker">01 / TASKS</p><h1 class="title">タスク</h1></div></div><section class="stats"><div class="stat"><b>${total}</b><span>合計</span></div><div class="stat"><b>${total-done}</b><span>未完了</span></div><div class="stat"><b>${done}</b><span>完了</span></div><div class="stat"><b style="color:${over?'var(--red)':'var(--text)'}">${over}</b><span>期限超過</span></div></section><form class="toolbar" id="addTask"><input class="input" id="taskName" required maxlength="120" placeholder="新しいタスクを入力…"><select class="select" id="taskPriority"><option value="high">● 高</option><option value="medium" selected>● 中</option><option value="low">● 低</option></select><input class="select" id="taskDue" type="date"><button class="button">追加</button></form><div class="toolbar"><input class="input" id="search" value="${esc(query)}" placeholder="⌕ タスク・メモを検索"><select class="select" id="sort"><option value="created">追加順</option><option value="due">期限日順</option><option value="priority">優先度順</option><option value="name">名前順</option></select></div><div class="filters">${[['all','すべて'],['open','未完了'],['done','完了済み'],['overdue','期限超過']].map(x=>`<button class="filter ${filter===x[0]?'active':''}" data-filter="${x[0]}">${x[1]}</button>`).join('')}</div><section class="panel" style="border-top:0;border-radius:0 0 6px 6px" id="taskList"></section></main>`}
 function getTasks(){let a=data.tasks.filter(t=>(filter==='all'||filter==='open'&&!t.done||filter==='done'&&t.done||filter==='overdue'&&!t.done&&t.due&&t.due<dayKey(new Date()))&&((t.title+t.note).toLowerCase().includes(query.toLowerCase())));let s=$('#sort')?.value||'created', rank={high:0,medium:1,low:2};return a.sort((a,b)=>s==='name'?a.title.localeCompare(b.title,'ja'):s==='priority'?rank[a.priority]-rank[b.priority]:s==='due'?(a.due||'9999').localeCompare(b.due||'9999'):new Date(b.created)-new Date(a.created))}
 function drawTasks(){let a=getTasks();$('#taskList').innerHTML=a.length?a.map(t=>`<article class="task ${t.done?'done':''}"><input class="check" type="checkbox" data-toggle="${t.id}" ${t.done?'checked':''} aria-label="完了"><div><div class="task-title">${esc(t.title)}</div><div class="meta"><span class="tag">● ${t.priority==='high'?'高':t.priority==='medium'?'中':'低'}</span>${t.due?`<span>${t.due}${!t.done&&t.due<dayKey(new Date())?' · 期限超過':''}</span>`:''}${t.note?`<span>▹ メモあり</span>`:''}</div></div><div class="task-actions"><button data-edit="${t.id}">編集</button></div></article>`).join(''):'<div class="empty">条件に一致するタスクはありません</div>';document.querySelectorAll('[data-toggle]').forEach(x=>x.onchange=()=>{let t=data.tasks.find(t=>t.id==x.dataset.toggle);t.done=x.checked;save();render()});document.querySelectorAll('[data-edit]').forEach(x=>x.onclick=()=>editTask(x.dataset.edit))}
@@ -285,7 +285,21 @@ function bindNotes() {
   };
   bindNoteList();
 }
-let focusDuration=1500, focusTaskName='', focusEndAt=0, focusTaskId='', focusFinishedTaskId='';
+// 集中する時間（分）は自由に入力できる。前回の分数を覚えておき、次に開いたときもその時間から始める。
+const FOCUS_MINUTES_KEY='dayflow-focus-minutes', FOCUS_MIN_MINUTES=1, FOCUS_MAX_MINUTES=180, FOCUS_DEFAULT_MINUTES=25;
+// 入力された値を 1〜180 の整数（分）にそろえる。数字として読めなければ null を返す。
+function normalizeFocusMinutes(value) {
+  if (value === null || String(value).trim() === '') return null;
+  const minutes = Math.round(Number(value));
+  if (!Number.isFinite(minutes)) return null;
+  return Math.min(FOCUS_MAX_MINUTES, Math.max(FOCUS_MIN_MINUTES, minutes));
+}
+function loadFocusMinutes() {
+  try { return normalizeFocusMinutes(localStorage.getItem(FOCUS_MINUTES_KEY)) || FOCUS_DEFAULT_MINUTES; }
+  catch (_) { return FOCUS_DEFAULT_MINUTES; }
+}
+let focusDuration=loadFocusMinutes()*60, focusTaskName='', focusEndAt=0, focusTaskId='', focusFinishedTaskId='';
+timer=focusDuration;
 const focusTask=id=>id===''?null:data.tasks.find(task=>String(task.id)===String(id))||null;
 // タスク一覧やダッシュボードの「集中」ボタンから、そのタスクを選んだ状態で集中画面を開く。
 function startFocusTask(id) {
@@ -303,7 +317,7 @@ function focus() {
     ${focusTask(focusTaskId)?`<p class="focus-linked">このタスクの集中 合計 ${focusMinutesByTask(data.sessions).get(String(focusTaskId))||0}分</p>`:''}
     ${focusTask(focusFinishedTaskId)&&!focusTask(focusFinishedTaskId).done?`<div class="focus-finished" role="status"><span>お疲れさまでした。「${esc(focusTask(focusFinishedTaskId).title)}」は終わりましたか？</span><button class="button" id="focusCompleteTask">タスクを完了にする</button></div>`:''}
     <div class="timer" id="timer" role="timer" aria-label="残り時間">${formatTimer(timer)}</div>
-    <div class="toolbar" style="justify-content:center">${[25,50,5].map(minutes=>`<button class="ghost" data-duration="${minutes}" aria-pressed="${focusDuration===minutes*60}">${minutes}分</button>`).join('')}
+    <div class="toolbar" style="justify-content:center"><label class="focus-minutes"><span>集中する時間</span><input class="input" type="number" id="focusMinutes" min="${FOCUS_MIN_MINUTES}" max="${FOCUS_MAX_MINUTES}" step="1" inputmode="numeric" value="${focusDuration/60}" ${interval!==null?'disabled':''}><span>分</span></label>
     <button class="button" id="timerStart">${interval!==null?'一時停止':timer>0&&timer<focusDuration?'再開':'開始'}</button><button class="button dim" id="timerReset">リセット</button></div>
     <div class="sessions"><h3>今日の集中記録</h3>${data.sessions.filter(session=>session.date===dayKey(new Date())).map(session=>`<div class="session">✓ ${session.minutes}分 · ${esc(session.task||'名称なし')}${focusTask(session.taskId)?' <span class="tag">タスク</span>':''}</div>`).join('')||'<div class="empty">まだ集中セッションはありません</div>'}</div>
   </section></main>`;
@@ -323,6 +337,16 @@ function updateFocusTimer() {
     if ('Notification' in window && Notification.permission === 'granted') showAppNotification('集中セッションが完了しました。', 'focus');
   } catch (_) { /* 通知を表示できなくても集中記録は保存する。 */ }
   if (page === 'focus') render();
+}
+// 集中する時間を変える。計測中は変えない（入力欄も無効にしている）。一時停止中に変えた場合は新しい時間で最初から。
+function setFocusMinutes(minutes) {
+  if (interval !== null) return;
+  focusDuration=minutes*60; timer=focusDuration; focusEndAt=0;
+  try { localStorage.setItem(FOCUS_MINUTES_KEY, String(minutes)); } catch (_) { /* 保存できなくても今回の集中にはこの時間を使う。 */ }
+  const display=$('#timer');
+  if (display) display.textContent=formatTimer(timer);
+  const startButton=$('#timerStart');
+  if (startButton) startButton.textContent='開始';
 }
 function bindFocus() {
   $('#focusTask').oninput=event=>{
@@ -346,11 +370,20 @@ function bindFocus() {
     }
     focusFinishedTaskId=''; render();
   };
-  document.querySelectorAll('[data-duration]').forEach(button=>button.onclick=()=>{
-    clearInterval(interval); interval=null;
-    focusDuration=Number(button.dataset.duration)*60;
-    timer=focusDuration; focusEndAt=0; render();
-  });
+  const minutesInput=$('#focusMinutes');
+  if (minutesInput) {
+    // 入力のたびに画面を作り直すと入力欄からカーソルが外れるので、タイマーとボタンの表示だけを書き換える。
+    minutesInput.oninput=()=>{
+      const minutes=Number(minutesInput.value);
+      // 入力途中（空欄・範囲外・小数）のあいだは前の時間のままにし、入力欄から離れたときにそろえる。
+      if (Number.isInteger(minutes) && minutes>=FOCUS_MIN_MINUTES && minutes<=FOCUS_MAX_MINUTES) setFocusMinutes(minutes);
+    };
+    minutesInput.onchange=()=>{
+      const minutes=normalizeFocusMinutes(minutesInput.value) || focusDuration/60;
+      minutesInput.value=String(minutes);
+      setFocusMinutes(minutes);
+    };
+  }
   $('#timerReset').onclick=()=>{clearInterval(interval);interval=null;timer=focusDuration;focusEndAt=0;render();};
   $('#timerStart').onclick=()=>{
     if (interval !== null) {

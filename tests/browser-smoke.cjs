@@ -241,7 +241,7 @@ async function main() {
     await page.locator('nav [data-page="focus"]').click();
     await page.clock.install();
     await page.locator('#focusTask').fill('ページ外で集中');
-    await page.locator('[data-duration="5"]').click();
+    await page.locator('#focusMinutes').fill('5');
     await page.locator('#timerStart').click();
     await page.locator('nav [data-page="home"]').click();
     await page.clock.fastForward(5 * 60 * 1000);

@@ -140,6 +140,8 @@ input::-webkit-calendar-picker-indicator{opacity:1;cursor:pointer;min-width:20px
 .dash-focus-start{margin-top:12px;width:100%}
 /* 集中モードとタスクの連携 */
 .focus-task-picker{flex-wrap:wrap;gap:8px}.focus-task-picker .select{max-width:340px;width:100%}
+.focus-minutes{display:inline-flex;align-items:center;gap:8px;color:var(--muted)}
+.focus-minutes .input{flex:none;min-width:0;width:96px;text-align:center}
 .focus-linked{margin:0 0 8px;color:var(--muted);text-align:center;font-size:13px}
 .focus-finished{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;margin:10px auto;padding:12px 14px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);max-width:520px}
 /* タイムライン */
