@@ -145,6 +145,7 @@ input::-webkit-calendar-picker-indicator{opacity:1;cursor:pointer;min-width:20px
 .focus-minutes{display:inline-flex;align-items:center;gap:8px;color:var(--muted)}
 .focus-minutes .input{flex:none;min-width:0;width:96px;text-align:center}
 .focus-linked{margin:0 0 8px;color:var(--muted);text-align:center;font-size:13px}
+.focus-notice{max-width:520px;margin:10px auto 0}
 .focus-finished{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;margin:10px auto;padding:12px 14px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);max-width:520px}
 /* タイムライン */
 .calendar-views{margin:16px 0 0}

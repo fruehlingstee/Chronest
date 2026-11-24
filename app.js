@@ -299,6 +299,8 @@ function loadFocusMinutes() {
   catch (_) { return FOCUS_DEFAULT_MINUTES; }
 }
 let focusDuration=loadFocusMinutes()*60, focusTaskName='', focusEndAt=0, focusTaskId='', focusFinishedTaskId='';
+// focusNotice: 通知が届かない理由（未対応・ブロック中など）を集中画面に出す文。focusEndTimeout: 終了時刻に1回だけ動く予約。
+let focusNotice='', focusEndTimeout=null;
 timer=focusDuration;
 const focusTask=id=>id===''?null:data.tasks.find(task=>String(task.id)===String(id))||null;
 // タスク一覧やダッシュボードの「集中」ボタンから、そのタスクを選んだ状態で集中画面を開く。
@@ -319,6 +321,7 @@ function focus() {
     <div class="timer" id="timer" role="timer" aria-label="残り時間">${formatTimer(timer)}</div>
     <div class="toolbar" style="justify-content:center"><label class="focus-minutes"><span>集中する時間</span><input class="input" type="number" id="focusMinutes" min="${FOCUS_MIN_MINUTES}" max="${FOCUS_MAX_MINUTES}" step="1" inputmode="numeric" value="${focusDuration/60}" ${interval!==null?'disabled':''}><span>分</span></label>
     <button class="button" id="timerStart">${interval!==null?'一時停止':timer>0&&timer<focusDuration?'再開':'開始'}</button><button class="button dim" id="timerReset">リセット</button></div>
+    <p class="task-notice focus-notice" id="focusNotice" role="status" ${focusNotice?'':'hidden'}>${esc(focusNotice)}</p>
     <div class="sessions"><h3>今日の集中記録</h3>${data.sessions.filter(session=>session.date===dayKey(new Date())).map(session=>`<div class="session">✓ ${session.minutes}分 · ${esc(session.task||'名称なし')}${focusTask(session.taskId)?' <span class="tag">タスク</span>':''}</div>`).join('')||'<div class="empty">まだ集中セッションはありません</div>'}</div>
   </section></main>`;
 }
@@ -328,15 +331,39 @@ function updateFocusTimer() {
   const display = $('#timer');
   if (display) display.textContent = formatTimer(timer);
   if (timer > 0) return;
-  clearInterval(interval);
-  interval = null;
-  data.sessions.unshift({date:dayKey(new Date(focusEndAt)),minutes:focusDuration/60,task:focusTaskName.trim(),taskId:focusTask(focusTaskId)?focusTaskId:''});
+  stopFocusTimer();
+  const finishedName=focusTaskName.trim(), finishedMinutes=focusDuration/60;
+  data.sessions.unshift({date:dayKey(new Date(focusEndAt)),minutes:finishedMinutes,task:finishedName,taskId:focusTask(focusTaskId)?focusTaskId:''});
   focusFinishedTaskId=focusTask(focusTaskId)?focusTaskId:'';
   save();
   try {
-    if ('Notification' in window && Notification.permission === 'granted') showAppNotification('集中セッションが完了しました。', 'focus');
+    // tag を毎回変えるのは、前回の通知が通知センターに残っていると、同じ tag では音もポップアップも出ずに差し替わるだけになるため。
+    if ('Notification' in window && Notification.permission === 'granted') showAppNotification(finishedName?`「${finishedName}」の集中（${finishedMinutes}分）が終わりました。`:`${finishedMinutes}分の集中が終わりました。`, `focus-${focusEndAt}`);
   } catch (_) { /* 通知を表示できなくても集中記録は保存する。 */ }
   if (page === 'focus') render();
+}
+// 計測を止める（一時停止・リセット・終了で共通）。繰り返しの計測と、終了時刻の予約の両方を取り消す。
+function stopFocusTimer() {
+  clearInterval(interval);
+  interval=null;
+  if (typeof clearTimeout === 'function') clearTimeout(focusEndTimeout);
+  focusEndTimeout=null;
+}
+// 時間になったら通知できるよう、集中を始めるときにブラウザへ通知の許可を求める。
+// ブラウザは利用者がボタンを押した直後でないと許可のダイアログを出さないので、開始ボタンの処理から呼ぶ。
+function prepareFocusNotification() {
+  focusNotice='';
+  try {
+    if (!('Notification' in window)) { focusNotice='このブラウザは通知に対応していないため、時間になっても通知は届きません。'; return; }
+    if (Notification.permission === 'granted') return;
+    if (Notification.permission === 'denied') { focusNotice='通知がブロックされています。時間になったら通知を受け取るには、ブラウザの設定でこのサイトの通知を許可してください。'; return; }
+    const request=Notification.requestPermission();
+    if (request && typeof request.then === 'function') request.then(permission => {
+      if (permission === 'granted') return;
+      focusNotice='通知が許可されなかったため、時間になっても通知は届きません。';
+      if (page === 'focus') render();
+    }).catch(() => {});
+  } catch (_) { /* 許可を確認できなくても集中は始める。 */ }
 }
 // 集中する時間を変える。計測中は変えない（入力欄も無効にしている）。一時停止中に変えた場合は新しい時間で最初から。
 function setFocusMinutes(minutes) {
@@ -384,16 +411,20 @@ function bindFocus() {
       setFocusMinutes(minutes);
     };
   }
-  $('#timerReset').onclick=()=>{clearInterval(interval);interval=null;timer=focusDuration;focusEndAt=0;render();};
+  $('#timerReset').onclick=()=>{stopFocusTimer();timer=focusDuration;focusEndAt=0;render();};
   $('#timerStart').onclick=()=>{
     if (interval !== null) {
       updateFocusTimer();
-      clearInterval(interval); interval=null; render();
+      stopFocusTimer(); render();
       return;
     }
     if (timer <= 0) timer=focusDuration;
+    prepareFocusNotification();
     focusEndAt=Date.now()+timer*1000;
     interval=setInterval(updateFocusTimer,250);
+    // 見ていないタブでは、ブラウザが setInterval を最大1分おきに間引くことがある。
+    // 終了時刻に1回だけ動く予約（setTimeout）も入れて、通知が遅れないようにする（少し余裕を足して、確実に0秒を過ぎてから動かす）。
+    if (typeof setTimeout === 'function') focusEndTimeout=setTimeout(updateFocusTimer, timer*1000+50);
     render();
   };
 }

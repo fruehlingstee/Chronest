@@ -5,10 +5,14 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 // ブラウザや追加パッケージなしで、保存処理と時計の実際の振る舞いを確認する。
-function createApp({ stored, preferences = {}, blockedStorage = false, failWrites = false, now = '2026-11-19T12:00:00+09:00' } = {}) {
+// notification を渡すと、ブラウザの通知機能の代役を用意する（permission: 今の許可状態、answer: 許可を求めたときの返事）。
+function createApp({ stored, preferences = {}, blockedStorage = false, failWrites = false, now = '2026-11-19T12:00:00+09:00', notification } = {}) {
   const storage = new Map([...(stored === undefined ? [] : [['dayflow-v2', stored]]), ...Object.entries(preferences)]);
   const nodes = new Map();
   const timers = new Map();
+  const timeouts = new Map();
+  const shownNotifications = [];
+  const permissionRequests = [];
   let clock = new Date(now).getTime();
   let timerId = 0;
   const element = () => ({ value: '', textContent: '', hidden: false, focus() {}, setAttribute() {} });
@@ -44,16 +48,35 @@ function createApp({ stored, preferences = {}, blockedStorage = false, failWrite
       setItem(key, value) { if (blockedStorage || failWrites) throw new Error('quota'); storage.set(key, value); }
     },
     setInterval(callback, delay) { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
-    clearInterval(id) { timers.delete(id); }
+    clearInterval(id) { timers.delete(id); },
+    setTimeout(callback, delay) { const id = ++timerId; timeouts.set(id, { callback, due: clock + delay }); return id; },
+    clearTimeout(id) { timeouts.delete(id); }
   });
   context.window = context;
+  if (notification) {
+    context.Notification = class {
+      constructor(title, options) { shownNotifications.push({ title, ...options }); }
+      static requestPermission() {
+        permissionRequests.push(this.permission);
+        this.permission = notification.answer ?? this.permission;
+        return Promise.resolve(this.permission);
+      }
+    };
+    context.Notification.permission = notification.permission;
+  }
+  // 予約時刻を過ぎた setTimeout を1回ずつ動かす。
+  const fireDueTimeouts = () => {
+    for (const [id, { callback, due }] of [...timeouts]) if (due <= clock) { timeouts.delete(id); callback(); }
+  };
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'schedule.js'), 'utf8'), context, { filename: 'schedule.js' });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8'), context, { filename: 'app.js' });
   return {
     run: code => vm.runInContext(code, context),
     node: selector => nodes.get(selector),
-    advance(ms) { clock += ms; for (const { callback } of [...timers.values()]) callback(); },
-    storage, timers,
+    advance(ms) { clock += ms; for (const { callback } of [...timers.values()]) callback(); fireDueTimeouts(); },
+    // 見ていないタブのように setInterval が間引かれて動かず、予約した setTimeout だけが時刻どおりに動く状況。
+    advanceInBackground(ms) { clock += ms; fireDueTimeouts(); },
+    storage, timers, timeouts, shownNotifications, permissionRequests,
     // 集中する時間の入力欄に値を打ち込む（event: 'input' は入力中、'change' は入力欄から離れたとき）。
     typeFocusMinutes(value, event = 'input') { const input = nodes.get('#focusMinutes'); input.value = value; input['on' + event](); return input; }
   };
@@ -341,7 +364,90 @@ test('reset restores the selected focus duration and cancels the active timer', 
   assert.equal(app.run('timer'), 3000);
   assert.equal(app.run('interval'), null);
   assert.equal(app.timers.size, 0);
+  assert.equal(app.timeouts.size, 0, '終了時刻の予約も取り消す');
   assert.equal(app.run('data.sessions.length'), 0);
+});
+
+test('集中を始めるときに通知の許可を求め、時間になったらタスク名つきで通知する', async () => {
+  const app = createApp({ notification: { permission: 'default', answer: 'granted' } });
+  app.run("page='focus'; render()");
+  app.node('#focusTask').oninput({ target: { value: 'レポート' } });
+  app.node('#timerStart').onclick();
+  await Promise.resolve();
+  assert.deepEqual(app.permissionRequests, ['default'], '開始ボタンを押したときに1回だけ許可を求める');
+  app.advance(25 * 60 * 1000);
+  assert.equal(app.shownNotifications.length, 1);
+  assert.equal(app.shownNotifications[0].title, 'Chronest');
+  assert.equal(app.shownNotifications[0].body, '「レポート」の集中（25分）が終わりました。');
+  app.advance(60000);
+  assert.equal(app.shownNotifications.length, 1, '同じ集中で二度通知しない');
+
+  // 2回目は許可済みなので聞き直さず、前回と違う tag で通知する（同じ tag だと音もポップアップも出ずに差し替わるだけになるため）。
+  app.node('#timerStart').onclick();
+  app.advance(25 * 60 * 1000);
+  assert.equal(app.permissionRequests.length, 1);
+  assert.equal(app.shownNotifications.length, 2);
+  assert.notEqual(app.shownNotifications[1].tag, app.shownNotifications[0].tag);
+});
+
+test('見ていないタブで setInterval が止まっていても、終了時刻ちょうどに通知する', () => {
+  const app = createApp({ notification: { permission: 'granted' } });
+  app.run("page='focus'; render()");
+  app.typeFocusMinutes('1');
+  app.node('#timerStart').onclick();
+  app.advanceInBackground(59 * 1000);
+  assert.equal(app.shownNotifications.length, 0, '時間前には通知しない');
+  // 予約は終了時刻の50ミリ秒後（時計の小さなずれで「残り1秒」と判定しないための余裕）。
+  app.advanceInBackground(1100);
+  assert.equal(app.shownNotifications.length, 1);
+  assert.equal(app.shownNotifications[0].body, '1分の集中が終わりました。', 'タスク名が無いときは分数だけを書く');
+  assert.equal(app.run('interval'), null);
+  assert.equal(app.timers.size, 0);
+  assert.equal(app.run('data.sessions.length'), 1);
+});
+
+test('一時停止すると終了時刻の予約を取り消し、再開すると残り時間で予約し直す', () => {
+  const app = createApp({ notification: { permission: 'granted' } });
+  app.run("page='focus'; render()");
+  app.typeFocusMinutes('1');
+  app.node('#timerStart').onclick();
+  app.advanceInBackground(20 * 1000);
+  app.node('#timerStart').onclick();
+  assert.equal(app.timeouts.size, 0);
+  app.advanceInBackground(5 * 60 * 1000);
+  assert.equal(app.shownNotifications.length, 0, '一時停止中は通知しない');
+  app.node('#timerStart').onclick();
+  app.advanceInBackground(39 * 1000);
+  assert.equal(app.shownNotifications.length, 0);
+  app.advanceInBackground(1100);
+  assert.equal(app.shownNotifications.length, 1);
+});
+
+test('通知が使えない・ブロック中・許可されなかったときは、集中画面で理由を知らせる', async () => {
+  const unsupported = createApp();
+  unsupported.run("page='focus'; render()");
+  unsupported.node('#timerStart').onclick();
+  assert.match(unsupported.run('focusNotice'), /対応していない/);
+  assert.match(unsupported.node('#app').innerHTML, /id="focusNotice" role="status" >このブラウザは通知に対応していない/);
+
+  const blocked = createApp({ notification: { permission: 'denied' } });
+  blocked.run("page='focus'; render()");
+  blocked.node('#timerStart').onclick();
+  assert.deepEqual(blocked.permissionRequests, [], 'ブロック中は許可を求め直さない');
+  assert.match(blocked.run('focusNotice'), /ブロック/);
+
+  const declined = createApp({ notification: { permission: 'default', answer: 'denied' } });
+  declined.run("page='focus'; render()");
+  declined.node('#timerStart').onclick();
+  await Promise.resolve();
+  assert.match(declined.run('focusNotice'), /許可されなかった/);
+  assert.match(declined.node('#app').innerHTML, /許可されなかった/, '返事を受けて画面を作り直す');
+
+  const allowed = createApp({ notification: { permission: 'granted' } });
+  allowed.run("page='focus'; render()");
+  allowed.node('#timerStart').onclick();
+  assert.equal(allowed.run('focusNotice'), '');
+  assert.match(allowed.node('#app').innerHTML, /id="focusNotice" role="status" hidden>/);
 });
 
 test('自分で入力した分数で集中でき、その分数が記録され、次に開いたときも覚えている', () => {
